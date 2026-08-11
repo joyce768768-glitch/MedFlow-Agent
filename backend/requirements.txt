@@ -1,0 +1,17 @@
+# ===== 医院诊疗 Agent 工作台 Demo 后端依赖 =====
+# Python 3.10+
+
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
+pydantic-settings==2.6.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.12
+
+# LangGraph 工作流骨架
+langgraph==0.2.53
+langchain-core==0.3.28
+
+# 跨域
+# (FastAPI 自带 CORSMiddleware，无需额外包)

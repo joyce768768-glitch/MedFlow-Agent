@@ -1,0 +1,45 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Node / Frontend =====
+node_modules/
+frontend/node_modules/
+frontend/dist/
+*.local
+.vite/
+.DS_Store
+
+# ===== 环境与密钥 =====
+.env
+.env.local
+.env.*.local
+*.key
+secrets/
+
+# ===== IDE =====
+.idea/
+.vscode/
+*.swp
+
+# ===== 日志 =====
+*.log
+logs/
+
+# ===== Demo 本地数据（仅内存，不持久化，保留以防空跑产生） =====
+*.sqlite
+*.db
