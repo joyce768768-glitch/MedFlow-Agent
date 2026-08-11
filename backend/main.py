@@ -21,6 +21,7 @@ from app.routers import (
     emr,
     mdt,
     notify,
+    patient_ext,
     patients,
     treatment,
 )
@@ -43,7 +44,7 @@ app.add_middleware(
 )
 
 # 注册路由
-for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext):
+for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext):
     app.include_router(r.router)
 
 

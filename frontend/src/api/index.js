@@ -18,10 +18,21 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     if (err.response?.status === 401) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      localStorage.removeItem('permissions')
-      if (location.pathname !== '/login') location.href = '/login'
+      const user = JSON.parse(localStorage.getItem('user') || 'null')
+      const isPatient = user?.role === 'patient'
+      if (isPatient) {
+        localStorage.removeItem('patient_token')
+        localStorage.removeItem('patient_user')
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        localStorage.removeItem('permissions')
+        if (location.pathname !== '/patient/login') location.href = '/patient/login'
+      } else {
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        localStorage.removeItem('permissions')
+        if (location.pathname !== '/login') location.href = '/login'
+      }
     }
     return Promise.reject(err)
   }

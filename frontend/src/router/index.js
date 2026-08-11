@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { usePatientStore } from '../stores/patient'
 
 const routes = [
   { path: '/', redirect: '/login' },
@@ -34,6 +35,27 @@ const routes = [
       { path: 'audit', name: 'adminAudit', component: () => import('../views/admin/AdminAuditLog.vue') },
     ],
   },
+  // —— 患者端 H5 ——
+  {
+    path: '/patient/login',
+    name: 'patientLogin',
+    component: () => import('../views/patient/PatientLogin.vue'),
+  },
+  {
+    path: '/patient',
+    component: () => import('../views/patient/PatientLayout.vue'),
+    meta: { requiresPatientAuth: true },
+    children: [
+      { path: '', redirect: '/patient/home' },
+      { path: 'home', name: 'patientHome', component: () => import('../views/patient/PatientHome.vue') },
+      { path: 'triage', name: 'patientTriage', component: () => import('../views/patient/PatientTriage.vue') },
+      { path: 'booking', name: 'patientBooking', component: () => import('../views/patient/PatientBooking.vue') },
+      { path: 'timeline', name: 'patientTimeline', component: () => import('../views/patient/PatientTimeline.vue') },
+      { path: 'reports', name: 'patientReports', component: () => import('../views/patient/PatientReports.vue') },
+      { path: 'navigation', name: 'patientNavigation', component: () => import('../views/patient/PatientNavigation.vue') },
+      { path: 'profile', name: 'patientProfile', component: () => import('../views/patient/PatientProfile.vue') },
+    ],
+  },
 ]
 
 const router = createRouter({
@@ -43,10 +65,20 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   const auth = useAuthStore()
+  const patientStore = usePatientStore()
+
+  // 患者端路由守卫
+  if (to.meta.requiresPatientAuth && !patientStore.isLoggedIn) {
+    return '/patient/login'
+  }
+  if (to.path === '/patient/login' && patientStore.isLoggedIn) {
+    return '/patient/home'
+  }
+
+  // 医生端路由守卫
   if (to.meta.requiresAuth && !auth.token) {
     return '/login'
   }
-  // 非 admin 角色禁止进入后台管理路由
   if (to.meta.requiresAdmin && !auth.isAdmin) {
     return '/workstation'
   }

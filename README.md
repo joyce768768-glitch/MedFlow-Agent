@@ -189,6 +189,54 @@ MDT 评论规则：提交后冻结、不可修改删除；采纳标记（`is_ado
 
 ---
 
+## 七之三、患者端 H5 模块（轻量化，与主项目共用 LangGraph State）
+
+> 患者端是面向 C 端用户的 H5 模拟小程序，技术栈：Vue3 + TailwindCSS，**全 Mock，不依赖微信原生 SDK、真实电子健康卡、真实 HIS**。
+> 后端路由集中在 `backend/app/routers/patient_ext.py`，前端页面位于 `frontend/src/views/patient/`。
+
+### 7.3.1 核心定位与数据隔离
+
+| 维度 | 设计 |
+| --- | --- |
+| 权限 | 患者端 = 只读视图隔离；不可编辑病历、不可查看 AI 草稿、不可查看 MDT 讨论 |
+| 数据 | 与医生端/后台共用 `PatientState` TypedDict，但患者端 API 显式过滤敏感字段（`ai_draft` / `mdt_comments`） |
+| 认证 | 患者独立 JWT（`role=patient`），`get_current_patient` 依赖严格校验角色匹配 |
+| 埋点 | 所有患者端关键动作调用 `store.track_patient_event()`，事件类型：`patient_triage_agent` / `booking_create` / `booking_sync_from_machine` / `report_view` / `nurse_assist_request` |
+
+### 7.3.2 患者端页面清单
+
+| 页面 | 路由 | 核心功能 |
+| --- | --- | --- |
+| 登录页 | `/patient/login` | 模拟电子健康卡登录，快速登录卡片 |
+| 首页 | `/patient/home` | 就诊看板、待办提醒、功能入口、大字切换 |
+| AI 导诊 | `/patient/triage` | 对话式收集症状 → 推荐 2-3 个科室（含置信度）→ 基于推荐挂号/转护士协助 |
+| 挂号 | `/patient/booking` | AI 推荐挂号 / 自助挂号两种模式 + Mock HIS 双向同步 |
+| 就诊时间线 | `/patient/timeline` | 挂号→候诊→问诊→检查→报告→复诊全流程可视化 |
+| 报告病案 | `/patient/reports` | 正式归档报告只读（不含 AI 草稿/MDT 讨论） |
+| 院内导航 | `/patient/navigation` | 搜索科室 → 楼栋/楼层/房间位置 |
+| 个人中心 | `/patient/profile` | 就诊记录、护士协助历史、适老化大字开关、退出登录 |
+
+### 7.3.3 Demo 模拟边界（患者端）
+
+| 能力 | Demo 实现 | 生产环境需补齐 |
+| --- | --- | --- |
+| 电子健康卡核验 | Mock 卡号匹配，无真实验证 | 对接国家电子健康卡接口 + 实名认证 |
+| AI 导诊 Agent | 关键词匹配 Mock 返回科室推荐（无 LLM） | 真实 LLM + 症状知识库 + 科室排班 |
+| 挂号 | 内存 Mock HIS，随机排队号/等候时间 | 对接真实 HIS 号源，支付渠道接入 |
+| HIS 双向同步 | Mock 状态翻转（booked → completed） | 真实 HL7/FHIR 消息总线同步 |
+| 消息推送 | 前端弹窗提醒 | 微信订阅消息 + 消息队列 |
+| 隐私脱敏 | 卡号脱敏显示（6222****0001） | 生产级脱敏流水线 |
+
+### 7.3.4 患者端硬性禁止清单
+
+- ❌ AI 导诊结果不得输出确诊结论、医嘱、用药方案
+- ❌ 患者不得编辑/修改任何病历/检查结果
+- ❌ 医生内部 MDT 讨论草稿不对患者开放
+- ❌ 不重建独立号源库，始终以 Mock HIS 为唯一号源基准
+- ❌ 不引入复杂第三方小程序 SDK，保持 H5 可直接访问
+
+---
+
 ## 八、Demo 边界说明（硬性禁止）
 
 - ❌ 不对接真实 HIS / LIS / HL7 / DICOM / 院内 IM，全部 Mock。
@@ -213,27 +261,30 @@ MDT 评论规则：提交后冻结、不可修改删除；采纳标记（`is_ado
 │   │   ├── auth.py                  # JWT + RBAC + 资源级权限依赖
 │   │   ├── schemas.py               # Pydantic 契约
 │   │   ├── storage.py               # 内存 Mock 存储（单例）
-│   │   ├── mock_data.py             # 演示账号 + 患者种子数据 + 主数据/RAG种子
-│   │   ├── subagents.py             # Mock LLM（病历草稿 / 检验汇总）
+│   │   ├── mock_data.py             # 演示账号 + 患者种子数据 + 主数据/RAG/患者用户种子
+│   │   ├── subagents.py             # Mock LLM（病历草稿 / 检验汇总 / 患者导诊）
 │   │   ├── graph/
-│   │   │   ├── state.py             # PatientState TypedDict
+│   │   │   ├── state.py             # PatientState TypedDict（含患者端扩展字段）
 │   │   │   ├── nodes.py             # 7 个节点（方案A 同节点 if 分支）
 │   │   │   └── workflow.py          # LangGraph 主图 + MDT 子图
 │   │   └── routers/                 # auth/patients/treatment/mdt/check_tasks/
-│   │       │                        # emr/config/notify/admin/admin_ext
+│   │       │                        # emr/config/notify/admin/admin_ext/patient_ext
 │   │       ├── admin.py             # 旧版后台：用户/科室/权限矩阵/简易知识库
-│   │       └── admin_ext.py         # 扩展后台：主数据/RAG/Agent配置/病案/审计
+│   │       ├── admin_ext.py         # 扩展后台：主数据/RAG/Agent配置/病案/审计
+│   │       └── patient_ext.py       # 患者端：登录/导诊/挂号/时间线/报告/导航/护士
 ├── frontend/
 │   ├── package.json  vite.config.js  tailwind.config.js
 │   └── src/
 │       ├── main.js  App.vue  style.css
-│       ├── router/  stores/auth.js  api/index.js  api/admin.js
-│       ├── views/   # Login / Workstation / SubAgentConfig
-│       │   └── admin/  # AdminLayout + 9 个管理页（Buildings/Departments/
-│       │                 # Users/ExamItems/RagDocs/Kb/AgentConfig/
-│       │                 # Permissions/Cases/AuditLog）
-│       └── components/  # PatientList/PatientDetail/TreatmentPanel/EmrEditor/
-│                       # AiDraftPanel/MdtDiscussion/CheckTaskBoard/Toggle/...
+│       ├── router/  stores/auth.js  stores/patient.js
+│       ├── api/index.js  api/admin.js  api/patient.js
+│       ├── views/
+│       │   ├── Login.vue  Workstation.vue  SubAgentConfig.vue
+│       │   ├── admin/  # AdminLayout + 9 个管理页
+│       │   └── patient/  # 患者端 H5（Login/Home/Triage/Booking/
+│       │                  # Timeline/Reports/Navigation/Profile/
+│       │                  # PatientLayout/PatientBottomNav/NurseAssistFab）
+│       └── components/  # PatientList/PatientDetail/TreatmentPanel/...
 ├── .gitignore  .env.example
 └── README.md
 ```
@@ -275,6 +326,8 @@ npm run dev
 
 ## 十一、演示账号
 
+### 医生端 / 后台管理账号
+
 | 用户名 | 密码 | 角色 | 说明 |
 | --- | --- | --- | --- |
 | `admin` | `123456` | 管理员 | 后台管理：主数据 / RAG / Agent开关 / 病案查阅 / 审计日志 |
@@ -284,6 +337,15 @@ npm run dev
 | `readonly` | `123456` | 历史只读医生 | 全病案只读，评论框隐藏 |
 
 登录页可点击对应账号卡片一键填充；`admin` 登录后默认跳转 `/admin` 后台，其他角色进 `/workstation` 工作台。
+
+### 患者端 H5 账号
+
+| 患者ID | 电子健康卡号 | 姓名 | 说明 |
+| --- | --- | --- | --- |
+| `p001` | `622202000001` | 张伟 | 男，45岁，上腹痛就诊中 |
+| `p002` | `622202000002` | 李娜 | 女，32岁，待接诊 |
+
+患者端入口：访问 `/patient/login`，支持快速登录卡片一键进入。
 
 ---
 
@@ -302,6 +364,15 @@ npm run dev
    - **病案查阅**：归档病案只读快照，5 个 Tab（主病历 / 诊疗多版本 / MDT 讨论 / 检查任务流转 / 全流程审计），禁止编辑原始留痕。
    - **系统审计日志**：跨患者的后台操作留痕（主数据修改 / Agent 开关 / 启停 / 归档），点击查看前后快照对比。
    - **权限矩阵 / 简易知识库**：4 角色 × 11 动作开关 + 4 类知识库条目 CRUD（保留旧版接口）。
+8. 打开新浏览器标签 → 访问 `/patient/login` → 用 `p001` / `622202000001` 登录患者端：
+   - **首页**：查看就诊看板、待办提醒、功能入口
+   - **AI 导诊**：输入症状 → 查看推荐科室 → 选择「基于推荐挂号」或「转护士协助」
+   - **挂号**：AI 推荐挂号 / 自助挂号两种模式，Mock HIS 双向同步
+   - **就诊时间线**：查看挂号→候诊→问诊→检查→报告全流程事件
+   - **报告病案**：只读查看正式归档文档，医生内部草稿/MDT 讨论不可见
+   - **院内导航**：搜索科室 → 查看楼栋/楼层/房间位置
+   - **适老化**：底部「我的」→ 字号切换（标准/大/超大）
+   - **呼叫护士**：右下角悬浮按钮 → 填写位置和需求 → Mock 推送到护士工作台
 
 ---
 

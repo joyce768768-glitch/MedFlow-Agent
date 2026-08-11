@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 
 
@@ -92,3 +93,62 @@ def lab_summary_subagent(check_tasks: list) -> str:
     lines.append("")
     lines.append("辅助解读：各项指标基本平稳，建议结合临床综合判断。（Mock 话术）")
     return "\n".join(lines)
+
+
+def patient_triage_subagent(patient_id: str, message: str, session_history: list = None) -> dict:
+    """AI 导诊 SubAgent（Mock）：采集症状，推荐 2-3 个科室及置信度。
+
+    真实实现：调用 LLM 分析症状，结合科室知识库推荐。
+    Demo：基于关键词匹配 + 规则生成推荐，不依赖外部 LLM。
+    """
+    msg = message.lower()
+
+    # Mock 规则匹配：根据关键词推荐科室
+    dept_rules = {
+        "消化内科": ["腹痛", "胃痛", "恶心", "呕吐", "腹泻", "便秘", "反酸", "腹胀", "上腹痛"],
+        "心内科": ["胸痛", "胸闷", "心悸", "心慌", "气短", "呼吸困难", "血压"],
+        "呼吸科": ["咳嗽", "咳痰", "发烧", "发热", "咽痛", "鼻塞"],
+        "骨科": ["腰痛", "腿痛", "关节痛", "扭伤", "骨折", "颈椎"],
+        "皮肤科": ["皮疹", "瘙痒", "湿疹", "痤疮", "皮炎"],
+        "眼科": ["视力", "眼睛", "近视", "散光", "白内障"],
+        "耳鼻喉科": ["耳鸣", "眩晕", "鼻炎", "中耳炎"],
+        "内分泌科": ["血糖", "糖尿病", "甲状腺", "肥胖"],
+    }
+
+    scored = []
+    for dept, keywords in dept_rules.items():
+        hit = sum(1 for kw in keywords if kw in msg)
+        if hit > 0:
+            confidence = min(0.95, 0.5 + hit * 0.15)
+            scored.append({
+                "dept_name": dept,
+                "confidence": round(confidence, 2),
+                "reason": f"症状匹配：{', '.join(kw for kw in keywords if kw in msg)}",
+            })
+
+    # 如果没有匹配，给默认推荐
+    if not scored:
+        scored = [
+            {"dept_name": "全科医学科", "confidence": 0.6, "reason": "症状不典型，建议全科首诊"},
+            {"dept_name": "内科", "confidence": 0.4, "reason": "常见内科症状"},
+        ]
+
+    # 按置信度排序，取 top 2-3
+    scored.sort(key=lambda x: x["confidence"], reverse=True)
+    recommended = scored[:3]
+
+    # Mock Agent 回复
+    reply = (
+        f"您好，我是 AI 导诊助手。根据您描述的症状，"
+        f"我为您推荐了 {len(recommended)} 个科室："
+        f"{'、'.join(d['dept_name'] for d in recommended)}。"
+        f"置信度最高的是 {recommended[0]['dept_name']}（{recommended[0]['confidence']*100:.0f}%）。"
+        f"建议您预约 {recommended[0]['dept_name']} 的门诊进一步就诊。"
+    )
+
+    return {
+        "reply": reply,
+        "recommended_departments": recommended,
+        "collected_symptoms": msg,
+        "trace_id": f"triage_{patient_id}_{uuid.uuid4().hex[:8]}",
+    }

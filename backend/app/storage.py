@@ -106,6 +106,8 @@ class Store:
             "emr_agent": {"global": True, "hospitals": {}},
             "imaging_agent": {"global": False, "hospitals": {}},
         }
+        self.patient_users: Dict[str, dict] = {}  # 患者端登录用户（patient_id -> info）
+        self.patient_events: List[dict] = []       # 患者端行为埋点事件
 
     # ---------- 用户 ----------
     def add_user(self, user: dict) -> None:
@@ -155,6 +157,41 @@ class Store:
     def delete_user(self, user_id: str) -> bool:
         with self._lock:
             return self.users.pop(user_id, None) is not None
+
+    # ---------- 患者端用户 ----------
+    def add_patient_user(self, user: dict) -> None:
+        with self._lock:
+            self.patient_users[user["patient_id"]] = user
+
+    def get_patient_user(self, patient_id: str) -> Optional[dict]:
+        with self._lock:
+            return self.patient_users.get(patient_id)
+
+    def find_patient_user(self, patient_id: str, medical_card_number: str) -> Optional[dict]:
+        with self._lock:
+            u = self.patient_users.get(patient_id)
+            if u and u.get("medical_card_number") == medical_card_number:
+                return u
+        return None
+
+    # ---------- 患者端行为埋点 ----------
+    def track_patient_event(self, event: dict) -> None:
+        with self._lock:
+            event.setdefault("timestamp", _now())
+            self.patient_events.append(event)
+            if len(self.patient_events) > 5000:
+                self.patient_events = self.patient_events[-2500:]
+
+    def list_patient_events(self, patient_id: Optional[str] = None,
+                            event_type: Optional[str] = None) -> List[dict]:
+        with self._lock:
+            out = list(self.patient_events)
+        if patient_id:
+            out = [e for e in out if e.get("patient_id") == patient_id]
+        if event_type:
+            out = [e for e in out if e.get("event_type") == event_type]
+        out.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+        return out
 
     # ---------- 患者 / State ----------
     def upsert_patient(self, state: PatientState) -> None:

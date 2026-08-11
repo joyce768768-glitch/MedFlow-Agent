@@ -95,6 +95,75 @@ class NotifyEvent(TypedDict, total=False):
     read: bool
 
 
+class TriageMessage(TypedDict, total=False):
+    """AI 导诊对话消息（患者↔导诊Agent 历史对话）。"""
+
+    msg_id: str
+    role: str                           # patient / agent / system
+    content: str
+    created_at: str
+
+
+class TriageSession(TypedDict, total=False):
+    """AI 导诊会话（一次导诊流程的完整上下文）。"""
+
+    session_id: str
+    patient_id: str
+    messages: List[TriageMessage]
+    recommended_departments: List[dict]  # [{dept_name, reason, confidence}]
+    adopted: bool                        # 患者是否采纳推荐
+    nurse_transfer: bool                 # 是否转人工护士协助
+    created_at: str
+    closed_at: Optional[str]
+    trace_id: str                        # 埋点追踪ID
+
+
+class BookingRecord(TypedDict, total=False):
+    """挂号记录（双向同步 Mock HIS）。"""
+
+    booking_id: str
+    patient_id: str
+    department: str
+    doctor_id: str
+    doctor_name: str
+    slot_date: str                       # 预约日期
+    slot_time: str                       # 时间段
+    queue_number: int                    # 排队号
+    estimated_wait: int                  # 预估等候分钟
+    building_name: str
+    floor_name: str
+    room_name: str
+    channel: str                         # mini_app / kiosk / window
+    status: str                          # booked / cancelled / completed
+    created_at: str
+    source_booking_id: Optional[str]    # 线下挂号的源ID（双向同步用）
+
+
+class VisitTimelineEvent(TypedDict, total=False):
+    """就诊行程时间线事件（患者端展示用）。"""
+
+    event_id: str
+    event_type: str                      # booking / waiting / consultation / check / report / followup
+    title: str
+    description: str
+    status: str                          # pending / current / done
+    timestamp: str
+    related_id: str                      # 关联 booking_id / task_id 等
+
+
+class NurseAssistRequest(TypedDict, total=False):
+    """患者呼叫护士工单（Mock 推送到护士工作台）。"""
+
+    request_id: str
+    patient_id: str
+    patient_name: str
+    room_name: str
+    message: str
+    status: str                          # pending / accepted / resolved
+    created_at: str
+    accepted_at: Optional[str]
+
+
 class PatientState(TypedDict, total=False):
     """LangGraph 全局状态：单个患者的完整诊疗上下文。"""
 
@@ -126,3 +195,10 @@ class PatientState(TypedDict, total=False):
     # —— 流转状态 ——
     status: str                              # waiting / in_progress / archived
     hitl_pending: bool                       # 是否等待人工终审
+
+    # —— 患者端扩展（只读视图隔离）——
+    triage_sessions: List[TriageSession]     # AI 导诊会话历史
+    bookings: List[BookingRecord]            # 挂号记录（含Mock HIS同步）
+    visit_timeline: List[VisitTimelineEvent] # 就诊行程时间线
+    nurse_requests: List[NurseAssistRequest] # 护士协助工单
+    patient_medical_card: Optional[dict]     # Mock 电子健康卡信息

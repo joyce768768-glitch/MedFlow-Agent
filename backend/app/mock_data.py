@@ -153,6 +153,30 @@ def _seed_kb() -> None:
     )
 
 
+def _seed_patient_users() -> None:
+    """患者端登录用户（Mock 电子健康卡）。"""
+    users = [
+        {
+            "patient_id": "p001",
+            "patient_name": "张伟",
+            "medical_card_number": "622202000001",
+            "phone": "138****0001",
+            "gender": "男",
+            "age": 45,
+        },
+        {
+            "patient_id": "p002",
+            "patient_name": "李娜",
+            "medical_card_number": "622202000002",
+            "phone": "138****0002",
+            "gender": "女",
+            "age": 32,
+        },
+    ]
+    for u in users:
+        store.add_patient_user(u)
+
+
 def _seed_patients() -> None:
     """2 名患者：p001 有完整历史版本/MDT/检查任务；p002 较简。"""
 
@@ -366,6 +390,7 @@ def seed_all(store: Store) -> None:
     _seed_buildings()
     _seed_exam_items()
     _seed_rag_docs()
+    _seed_patient_users()
     _seed_patients()
 
 
