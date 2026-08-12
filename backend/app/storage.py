@@ -102,12 +102,41 @@ class Store:
         self.exam_items: Dict[str, dict] = {}           # 检验/检查项目字典
         self.rag_docs: Dict[str, dict] = {}             # RAG文档(含chunks+Mock向量)
         self.system_audit_log: List[dict] = []          # 系统审计日志(跨患者)
-        self.agent_config: dict = {                     # Agent能力灰度配置
-            "emr_agent": {"global": True, "hospitals": {}},
-            "imaging_agent": {"global": False, "hospitals": {}},
+        self.agent_config: dict = {                     # Agent能力灰度配置 + 模型配置 + Prompt + Output Schema
+            "patient_triage_agent": {
+                "global": True, "hospitals": {},
+                "model_config": {
+                    "provider": "mock", "enable_real": 0,
+                    "model": "", "base_url": "", "api_key": "",
+                    "timeout": 30,
+                },
+                "prompt": "",  # 自定义 System Prompt，空=使用默认
+                "output_schema": "",  # 自定义输出 Schema，空=使用默认
+            },
+            "emr_agent": {
+                "global": True, "hospitals": {},
+                "model_config": {
+                    "provider": "mock", "enable_real": 0,
+                    "model": "", "base_url": "", "api_key": "",
+                    "timeout": 30,
+                },
+                "prompt": "",
+                "output_schema": "",
+            },
+            "imaging_agent": {
+                "global": False, "hospitals": {},
+                "model_config": {
+                    "provider": "mock", "enable_real": 0,
+                    "model": "", "base_url": "", "api_key": "",
+                    "timeout": 30,
+                },
+                "prompt": "",
+                "output_schema": "",
+            },
         }
         self.patient_users: Dict[str, dict] = {}  # 患者端登录用户（patient_id -> info）
         self.patient_events: List[dict] = []       # 患者端行为埋点事件
+        self.emr_chat_sessions: Dict[str, List[dict]] = {}  # 病历对话历史（patient_id -> [msg]）
 
     # ---------- 用户 ----------
     def add_user(self, user: dict) -> None:
@@ -192,6 +221,37 @@ class Store:
             out = [e for e in out if e.get("event_type") == event_type]
         out.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
         return out
+
+    # ---------- 病历 Agent 对话历史 ----------
+    def get_emr_chat_history(self, patient_id: str) -> List[dict]:
+        """获取某患者的病历 Agent 对话历史（按时间正序）。"""
+        with self._lock:
+            return list(self.emr_chat_sessions.get(patient_id, []))
+
+    def append_emr_chat_message(self, patient_id: str, role: str, content: str,
+                                extra: Optional[dict] = None) -> dict:
+        """追加一条对话消息。role: 'user' / 'assistant'。返回新增消息。"""
+        with self._lock:
+            msg = {
+                "msg_id": _uid("emrmsg"),
+                "role": role,
+                "content": content,
+                "timestamp": _now(),
+            }
+            if extra:
+                msg.update(extra)
+            self.emr_chat_sessions.setdefault(patient_id, []).append(msg)
+            # 限制单 patient 历史长度，避免内存膨胀
+            if len(self.emr_chat_sessions[patient_id]) > 100:
+                self.emr_chat_sessions[patient_id] = self.emr_chat_sessions[patient_id][-50:]
+            return dict(msg)
+
+    def clear_emr_chat_history(self, patient_id: str) -> int:
+        """清空某患者的对话历史，返回清除条数。"""
+        with self._lock:
+            n = len(self.emr_chat_sessions.get(patient_id, []))
+            self.emr_chat_sessions.pop(patient_id, None)
+            return n
 
     # ---------- 患者 / State ----------
     def upsert_patient(self, state: PatientState) -> None:
@@ -585,7 +645,11 @@ class Store:
     def get_agent_config(self) -> dict:
         with self._lock:
             return {
-                k: {"global": v["global"], "hospitals": dict(v["hospitals"])}
+                k: {
+                    "global": v["global"],
+                    "hospitals": dict(v["hospitals"]),
+                    "model_config": dict(v.get("model_config", {})),
+                }
                 for k, v in self.agent_config.items()
             }
 
@@ -600,6 +664,83 @@ class Store:
             if hospital_id and hospital_on is not None:
                 cfg["hospitals"][hospital_id] = bool(hospital_on)
             return {agent_key: {"global": cfg["global"], "hospitals": dict(cfg["hospitals"])}}
+
+    def update_agent_model_config(self, agent_key: str, *, provider: Optional[str] = None,
+                                  enable_real: Optional[int] = None, model: Optional[str] = None,
+                                  base_url: Optional[str] = None, api_key: Optional[str] = None,
+                                  timeout: Optional[int] = None) -> dict:
+        """更新某个 Agent 的模型配置。
+
+        api_key 语义（防误清）：
+        - None（字段未传）→ 不修改
+        - ''（空字符串，显式清除）→ 清除 Key
+        - 非空字符串 → 覆盖为新值（strip 后存储）
+        """
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            mc = cfg.setdefault("model_config", {})
+            if provider is not None:
+                mc["provider"] = provider
+            if enable_real is not None:
+                mc["enable_real"] = int(enable_real)
+            if model is not None:
+                mc["model"] = model.strip()
+            if base_url is not None:
+                mc["base_url"] = base_url.strip()
+            if api_key is not None:
+                stripped = api_key.strip()
+                if stripped:
+                    mc["api_key"] = stripped       # 覆盖为新值
+                elif api_key == "":
+                    mc["api_key"] = ""            # 显式清除
+                # else: api_key 全为空白字符，不修改（防误清）
+            if timeout is not None:
+                mc["timeout"] = int(timeout)
+            return dict(mc)
+
+    def get_agent_model_config(self, agent_key: str) -> dict:
+        """获取某个 Agent 的模型配置。"""
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            return dict(cfg.get("model_config", {}))
+
+    def get_agent_prompt(self, agent_key: str) -> str:
+        """获取某个 Agent 的自定义 Prompt（空字符串=使用默认）。"""
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            return cfg.get("prompt", "")
+
+    def update_agent_prompt(self, agent_key: str, prompt: str) -> dict:
+        """更新某个 Agent 的自定义 Prompt。空字符串=清除自定义，恢复默认。"""
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            cfg["prompt"] = (prompt or "").strip()
+            return {"agent_key": agent_key, "prompt": cfg["prompt"]}
+
+    def get_agent_output_schema(self, agent_key: str) -> str:
+        """获取某个 Agent 的自定义输出 Schema（空字符串=使用默认）。"""
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            return cfg.get("output_schema", "")
+
+    def update_agent_output_schema(self, agent_key: str, output_schema: str) -> dict:
+        """更新某个 Agent 的自定义输出 Schema。空字符串=清除自定义，恢复默认。"""
+        with self._lock:
+            cfg = self.agent_config.get(agent_key)
+            if cfg is None:
+                raise KeyError(f"未知 Agent: {agent_key}")
+            cfg["output_schema"] = (output_schema or "").strip()
+            return {"agent_key": agent_key, "output_schema": cfg["output_schema"]}
 
     def is_agent_enabled(self, agent_key: str, hospital_id: str = "") -> bool:
         """供 LangGraph 节点查询：医院级覆盖 > 全局开关。"""

@@ -46,6 +46,10 @@ export const adminApi = {
   // ----- Agent 能力配置 -----
   getAgentConfig: () => api.get('/admin/agents/config').then((r) => r.data),
   toggleAgent: (body) => api.put('/admin/agents/toggle', body).then((r) => r.data),
+  // ----- Agent 模型配置（per-agent） -----
+  getAgentModelConfig: (agentKey) => api.get(`/admin/agents/model-config/${agentKey}`).then((r) => r.data),
+  updateAgentModelConfig: (agentKey, body) => api.put(`/admin/agents/model-config/${agentKey}`, body).then((r) => r.data),
+  testAgentModel: (agentKey) => api.post(`/admin/agents/model-config/${agentKey}/test`).then((r) => r.data),
   // ----- 归档病案 -----
   listCases: (params) => api.get('/admin/cases', { params }).then((r) => r.data),
   getCaseDetail: (pid) => api.get(`/admin/cases/${pid}`).then((r) => r.data),

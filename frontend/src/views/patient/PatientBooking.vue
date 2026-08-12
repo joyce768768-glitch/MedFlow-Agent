@@ -653,8 +653,6 @@ async function quickBook(dept) {
   try {
     const res = await patientApi.createBooking({
       department: dept.name,
-      confidence: dept.confidence,
-      source: 'triage_recommend',
     })
 
     const booking = res.booking || res.data || {
@@ -669,10 +667,10 @@ async function quickBook(dept) {
 
     successBooking.value = {
       department: booking.department || dept.name,
-      doctor: booking.doctor || '待分配',
-      time: booking.scheduled_at || new Date().toLocaleString('zh-CN'),
-      queue_number: booking.queue_number || booking.queueNumber || 'A--',
-      room: booking.room || dept.room || '待分配',
+      doctor: booking.doctor_name || booking.doctor || '待分配',
+      time: `${booking.slot_date || ''} ${booking.slot_time || ''}`.trim() || new Date().toLocaleString('zh-CN'),
+      queue_number: booking.queue_number || 'A--',
+      room: booking.room_name || booking.room || dept.room || '待分配',
     }
     showSuccess.value = true
     loadBookings()
@@ -700,11 +698,8 @@ async function submitBooking() {
   const body = {
     department: selectedDept.value,
     doctor_id: selectedDoctor.value || null,
-    date: selectedDate.value,
-    time_slot: selectedTime.value,
-    queue_number: 'A' + queueNumber.value,
-    estimated_wait: estimatedWait.value,
-    room: roomLocation.value,
+    slot_date: selectedDate.value,
+    slot_time: selectedTime.value,
   }
 
   try {
@@ -713,10 +708,10 @@ async function submitBooking() {
 
     successBooking.value = {
       department: booking.department || selectedDept.value,
-      doctor: selectedDoctorName.value || '待分配',
-      time: `${selectedDateLabel.value} ${selectedTimeLabel.value}`,
-      queue_number: booking.queue_number || body.queue_number,
-      room: booking.room || roomLocation.value,
+      doctor: booking.doctor_name || selectedDoctorName.value || '待分配',
+      time: `${booking.slot_date || selectedDateLabel.value} ${booking.slot_time || selectedTimeLabel.value}`,
+      queue_number: booking.queue_number || ('A' + queueNumber.value),
+      room: booking.room_name || roomLocation.value,
     }
     showSuccess.value = true
     loadBookings()

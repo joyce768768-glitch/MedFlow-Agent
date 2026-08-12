@@ -47,9 +47,9 @@ class TriageAdoptRequest(BaseModel):
 
 class BookingCreateRequest(BaseModel):
     department: str = Field(..., description="科室名称")
-    doctor_id: str = Field(..., description="医生ID")
-    slot_date: str = Field(..., description="预约日期 YYYY-MM-DD")
-    slot_time: str = Field(..., description="时间段 HH:mm-HH:mm")
+    doctor_id: Optional[str] = Field(None, description="医生ID（AI推荐快速挂号可不传）")
+    slot_date: Optional[str] = Field(None, description="预约日期 YYYY-MM-DD（不传默认今天）")
+    slot_time: Optional[str] = Field(None, description="时间段 HH:mm-HH:mm（不传默认全天）")
 
 
 class NurseAssistRequest(BaseModel):
@@ -226,11 +226,15 @@ def triage_chat(body: TriageChatRequest, patient: dict = Depends(get_current_pat
     }
     session.setdefault("messages", []).append(patient_msg)
 
-    # [Mock] 调用导诊 SubAgent（生产替换为 LLM + 科室知识库）
+    # RAG 召回科室就诊须知（与主数据同源），注入 LLM 上下文
+    kb_context = _build_triage_kb_context(store, body.message)
+
+    # 调用导诊 SubAgent（默认 Mock 规则；环境变量打开后走真 LLM；失败自动降级）
     triage_result = patient_triage_subagent(
         patient_id=patient_id,
         message=body.message,
         session_history=session.get("messages", []),
+        kb_context=kb_context,
     )
 
     # 追加 Agent 回复
@@ -243,16 +247,25 @@ def triage_chat(body: TriageChatRequest, patient: dict = Depends(get_current_pat
     session["messages"].append(agent_msg)
     session["recommended_departments"] = triage_result["recommended_departments"]
 
+    # 埋点：补充 provider_used + fallback 信息，观测看板区分真模型 vs Mock
+    event_detail = {
+        "message": body.message[:100],
+        "provider_used": triage_result.get("provider_used", "mock"),
+        "fallback_reason": triage_result.get("fallback_reason"),
+    }
+
     # 持久化患者 State
     store.upsert_patient(state)
 
-    # 埋点
+    # 埋点：patient_triage_agent 事件，接入观测看板 + LangSmith Trace
     store.track_patient_event({
         "patient_id": patient_id,
-        "event_type": "triage_chat",
+        "patient_hash_id": patient_id,
+        "event_type": "patient_triage_agent",
         "session_id": body.session_id,
         "trace_id": triage_result["trace_id"],
-        "detail": body.message[:100],
+        "detail": event_detail,
+        "recommended_departments": triage_result["recommended_departments"],
     })
 
     return {
@@ -261,7 +274,50 @@ def triage_chat(body: TriageChatRequest, patient: dict = Depends(get_current_pat
         "recommended_departments": triage_result["recommended_departments"],
         "trace_id": triage_result["trace_id"],
         "messages": session["messages"][-6:],  # 最近 6 条
+        "meta": {
+            "provider_used": triage_result.get("provider_used", "mock"),
+            "fallback_reason": triage_result.get("fallback_reason"),
+        },
     }
+
+
+def _build_triage_kb_context(store, user_msg: str) -> str:
+    """RAG 召回导诊上下文：从后台主数据 + RAG 文档库提取就诊须知/科室信息。
+
+    只召回"就诊须知""检查注意事项""科室介绍"，禁止医疗诊断知识输出。
+    返回拼接字符串，直接注入 system prompt。
+    """
+    lines: list = []
+
+    # 1. 科室主数据（科室名称、分类）
+    if hasattr(store, "departments"):
+        dept_names = [
+            d.get("name") or d.get("dept_name") for d in store.departments.values()
+            if d.get("name") or d.get("dept_name")
+        ]
+        if dept_names:
+            lines.append("【院内开诊科室】" + "、".join(dept_names[:30]))
+
+    # 2. RAG 文档（就诊须知、检查注意事项）
+    if hasattr(store, "rag_documents"):
+        msg_lower = user_msg.lower()
+        hits = []
+        for doc in store.rag_documents.values():
+            text = (doc.get("title", "") + doc.get("content", "")).lower()
+            # 简单关键词匹配
+            overlap = sum(1 for kw in ["就诊", "检查", "须知", "注意", "抽血", "空腹", "CT", "B超", "预约"]
+                          if kw in msg_lower or kw in text)
+            if overlap >= 1:
+                title = doc.get("title", "")
+                content_preview = doc.get("content", "")[:80].replace("\n", " ")
+                hits.append(f"- {title}: {content_preview}")
+            if len(hits) >= 5:
+                break
+        if hits:
+            lines.append("【就诊须知参考】")
+            lines.extend(hits)
+
+    return "\n".join(lines)
 
 
 # ==================== 4. 导诊会话管理 ====================
@@ -506,6 +562,12 @@ def create_booking(
     if state is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "患者档案不存在")
 
+    # 补充默认值
+    from datetime import datetime
+    slot_date = body.slot_date or datetime.now().strftime("%Y-%m-%d")
+    slot_time = body.slot_time or "09:00-12:00"
+    doctor_id = body.doctor_id or ""
+
     # [Mock] 查找医生和房间
     doctor_info = _find_doctor_by_department(body.department)
     room_info = _find_room_by_department(body.department)
@@ -521,10 +583,10 @@ def create_booking(
         "booking_id": booking_id,
         "patient_id": patient_id,
         "department": body.department,
-        "doctor_id": body.doctor_id,
+        "doctor_id": doctor_id,
         "doctor_name": doctor_info["doctor_name"],
-        "slot_date": body.slot_date,
-        "slot_time": body.slot_time,
+        "slot_date": slot_date,
+        "slot_time": slot_time,
         "queue_number": queue_number,
         "estimated_wait": estimated_wait,
         "building_name": room_info["building"],
@@ -771,3 +833,47 @@ def request_nurse_assistance(
         "status": "pending",
         "message": "护士协助请求已提交，请耐心等待。",
     }
+
+
+# ==================== OAG 时态图查询端点 ====================
+
+@router.get("/oag/chain")
+def get_patient_chain(
+    patient: dict = Depends(get_current_patient),
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """OAG 患者全链路多跳查询（患者端调用）。"""
+    try:
+        from app.graph.temporal_query import patient_full_chain
+        time_window = (start_date, end_date) if start_date or end_date else None
+        return patient_full_chain(patient["patient_id"], time_window=time_window, store=store)
+    except ImportError:
+        raise HTTPException(status_code=500, detail="OAG 模块未就绪")
+
+
+@router.get("/oag/visit/{visit_id}")
+def get_visit_context(
+    visit_id: str,
+    patient: dict = Depends(get_current_patient),
+):
+    """OAG 本次就诊上下文隔离查询。"""
+    try:
+        from app.graph.temporal_query import visit_context_isolation
+        result = visit_context_isolation(visit_id, store=store)
+        # 权限校验：只能查看自己的就诊
+        if result.get("visit", {}).get("patient_id") != patient["patient_id"]:
+            raise HTTPException(status_code=403, detail="无权查看该就诊记录")
+        return result
+    except ImportError:
+        raise HTTPException(status_code=500, detail="OAG 模块未就绪")
+
+
+@router.get("/oag/health")
+def oag_health_check():
+    """OAG 图谱健康检查（观测看板用）。"""
+    try:
+        from app.graph.temporal_query import graph_health_check
+        return graph_health_check()
+    except ImportError:
+        return {"status": "degraded", "message": "OAG 模块未就绪"}

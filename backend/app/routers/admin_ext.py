@@ -1,4 +1,4 @@
-"""后台管理扩展路由：主数据 / RAG文档 / Agent配置 / 归档病案 / 系统审计。
+"""后台管理扩展路由：主数据 / RAG文档 / Agent配置 / 归档病案 / 系统审计 / LLM模型管理。
 
 与 admin.py 共用 /admin 前缀，仅 admin 角色可访问。
 所有写操作自动记录系统审计日志（store.append_system_audit）。
@@ -8,10 +8,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Optional
+from pydantic import BaseModel
 
 from app.auth import require_admin
 from app.schemas import (
     AgentConfigOut,
+    AgentModelConfigOut,
+    AgentModelConfigUpdate,
     AgentToggleRequest,
     ArchivedCaseSummary,
     BuildingCreate,
@@ -36,7 +39,7 @@ router = APIRouter(prefix="/admin", tags=["admin-ext"], dependencies=[Depends(re
 _VALID_EXAM_CATS = {"blood", "ct", "ultrasound", "pathology", "other"}
 _VALID_RAG_CATS = {"clinical_guide", "soap_template", "sop", "mdt_template"}
 _VALID_RAG_STATUS = {"pending", "active", "inactive"}
-_VALID_AGENT_KEYS = {"emr_agent", "imaging_agent"}
+_VALID_AGENT_KEYS = {"patient_triage_agent", "emr_agent", "imaging_agent"}
 
 
 def _audit(user: dict, action: str, entity: str, entity_id: str = "",
@@ -258,3 +261,187 @@ def get_archived_case(patient_id: str):
 def list_system_audit(action: Optional[str] = None, entity: Optional[str] = None):
     """系统审计日志列表（后台数据修改 / Agent开关变更 / 归档操作留痕）。"""
     return store.list_system_audit(action=action, entity=entity)
+
+
+# ==================== Agent 模型配置（per-agent） ====================
+
+def _mask_key(key: str) -> str:
+    """脱敏 API Key：sk-abc...wxyz"""
+    if not key:
+        return ""
+    if len(key) <= 8:
+        return key[:2] + "***"
+    return key[:4] + "..." + key[-4:]
+
+
+def _is_agent_real_active(mc: dict) -> bool:
+    """判断某 Agent 的模型配置是否真走 LLM（三条件全满足）。"""
+    return (
+        mc.get("provider") == "openai_compatible"
+        and int(mc.get("enable_real", 0)) == 1
+        and bool(mc.get("api_key"))
+    )
+
+
+def _build_model_config_out(agent_key: str, mc: dict) -> AgentModelConfigOut:
+    prompt = store.get_agent_prompt(agent_key)
+    output_schema = store.get_agent_output_schema(agent_key)
+    return AgentModelConfigOut(
+        agent_key=agent_key,
+        provider=mc.get("provider", "mock"),
+        enable_real=int(mc.get("enable_real", 0)),
+        model=mc.get("model", ""),
+        base_url=mc.get("base_url", ""),
+        api_key_masked=_mask_key(mc.get("api_key", "")),
+        api_key_configured=bool(mc.get("api_key")),
+        timeout=int(mc.get("timeout", 30)),
+        real_active=_is_agent_real_active(mc),
+        prompt=prompt,
+        prompt_is_default=not bool(prompt),
+        output_schema=output_schema,
+        output_schema_is_default=not bool(output_schema),
+    )
+
+
+@router.get("/agents/model-config/{agent_key}", response_model=AgentModelConfigOut)
+def get_agent_model_config(agent_key: str):
+    """获取某个 Agent 的模型配置（api_key 脱敏返回）。"""
+    if agent_key not in _VALID_AGENT_KEYS:
+        raise HTTPException(400, f"Agent 非法，可选：{sorted(_VALID_AGENT_KEYS)}")
+    mc = store.get_agent_model_config(agent_key)
+    return _build_model_config_out(agent_key, mc)
+
+
+@router.put("/agents/model-config/{agent_key}", response_model=AgentModelConfigOut)
+def update_agent_model_config(agent_key: str, body: AgentModelConfigUpdate,
+                              user: dict = Depends(require_admin)):
+    """更新某个 Agent 的模型配置 + Prompt + Output Schema（运行时热更新，不重启即生效）。
+
+    api_key 语义：None=不改，''=清除，非空=覆盖
+    prompt 语义：None=不改，''=清除自定义恢复默认，非空=覆盖
+    output_schema 语义：None=不改，''=清除自定义恢复默认，非空=覆盖
+    """
+    if agent_key not in _VALID_AGENT_KEYS:
+        raise HTTPException(400, f"Agent 非法，可选：{sorted(_VALID_AGENT_KEYS)}")
+    if body.provider is not None and body.provider not in ("mock", "openai_compatible"):
+        raise HTTPException(400, "provider 只支持 mock / openai_compatible")
+
+    before = store.get_agent_model_config(agent_key)
+    after = store.update_agent_model_config(
+        agent_key,
+        provider=body.provider,
+        enable_real=body.enable_real,
+        model=body.model,
+        base_url=body.base_url,
+        api_key=body.api_key,
+        timeout=body.timeout,
+    )
+
+    # Prompt 单独更新（与 model_config 平级）
+    if body.prompt is not None:
+        store.update_agent_prompt(agent_key, body.prompt)
+
+    # Output Schema 单独更新
+    if body.output_schema is not None:
+        store.update_agent_output_schema(agent_key, body.output_schema)
+
+    _audit(
+        user, "update", "agent_model_config", agent_key,
+        before={k: v for k, v in before.items() if k != "api_key"},
+        after={k: v for k, v in after.items() if k != "api_key"},
+    )
+    return _build_model_config_out(agent_key, after)
+
+
+@router.post("/agents/model-config/{agent_key}/test")
+def test_agent_model_connection(agent_key: str, user: dict = Depends(require_admin)):
+    """测试某个 Agent 的模型配置连通性（发送最小消息，看是否返回正常）。
+
+    返回：
+    - ok=True + reply_preview → 连通正常
+    - ok=False + error + fallback=mock → 连通失败但自动降级 Mock，服务不中断
+    """
+    from urllib.parse import urlparse
+
+    if agent_key not in _VALID_AGENT_KEYS:
+        raise HTTPException(400, f"Agent 非法，可选：{sorted(_VALID_AGENT_KEYS)}")
+    mc = store.get_agent_model_config(agent_key)
+
+    if not _is_agent_real_active(mc):
+        return {
+            "ok": False,
+            "error": "当前未启用真模型（provider!=openai_compatible 或 enable_real=0 或无Key）",
+            "fallback": "mock",
+            "provider_used": "mock",
+        }
+
+    # 前置校验 base_url 格式
+    base_url = (mc.get("base_url") or "").strip()
+    if not base_url:
+        return {
+            "ok": False,
+            "error": "Base URL 未配置",
+            "fallback": "mock",
+            "provider_used": "mock",
+        }
+    parsed = urlparse(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return {
+            "ok": False,
+            "error": f"Base URL 格式错误：'{base_url}'（需要完整 URL，如 https://api.deepseek.com/v1）",
+            "fallback": "mock",
+            "provider_used": "mock",
+        }
+
+    # 根据 Agent 类型选择对应的 LLM 调用函数
+    # 用症状/病历消息测试，确保 triage 解析能产出有效推荐（避免"推荐列表为空"降级）
+    if agent_key == "patient_triage_agent":
+        from app.llm_client import run_triage_llm
+        call_fn = lambda: run_triage_llm(
+            "咳嗽加重伴胸闷气短",
+            model_config=mc,
+        )
+    elif agent_key == "emr_agent":
+        from app.llm_client import run_emr_chat_llm
+        aos = store.get_agent_output_schema(agent_key)
+        call_fn = lambda: run_emr_chat_llm(
+            "根据主诉生成 SOAP 草稿",
+            model_config=mc,
+            agent_output_schema=aos,
+        )
+    else:  # imaging_agent
+        from app.llm_client import run_triage_llm
+        call_fn = lambda: run_triage_llm(
+            "头痛伴视力模糊",
+            model_config=mc,
+        )
+
+    try:
+        result = call_fn()
+        provider = result.get("provider_used", "mock")
+        fallback = result.get("fallback_reason")
+        reply = result.get("reply", "")
+
+        # 判断连通成功：
+        # 1. provider_used == "openai_compatible" 且回复非空 → 成功
+        # 2. 即使有 fallback（如推荐列表为空），只要 LLM 返回了文本 → 也算连通成功
+        if provider == "openai_compatible" and reply:
+            return {
+                "ok": True,
+                "provider_used": provider,
+                "reply_preview": reply[:200],
+                "trace_id": result.get("trace_id"),
+            }
+        return {
+            "ok": False,
+            "error": fallback or "模型调用后降级到 Mock",
+            "fallback": "mock",
+            "provider_used": provider,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": f"{type(e).__name__}: {e}",
+            "fallback": "mock",
+            "provider_used": "mock",
+        }

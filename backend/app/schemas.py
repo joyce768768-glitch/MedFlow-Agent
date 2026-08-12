@@ -321,15 +321,49 @@ class RagRecallHit(BaseModel):
 
 # ==================== Agent 能力配置 ====================
 class AgentConfigOut(BaseModel):
+    patient_triage_agent: dict
     emr_agent: dict
     imaging_agent: dict
 
 
 class AgentToggleRequest(BaseModel):
-    agent_key: str = Field(..., description="emr_agent / imaging_agent")
+    agent_key: str = Field(..., description="patient_triage_agent / emr_agent / imaging_agent")
     global_on: Optional[bool] = None
     hospital_id: Optional[str] = None
     hospital_on: Optional[bool] = None
+
+
+class AgentModelConfigOut(BaseModel):
+    """单个 Agent 模型配置返回（api_key 脱敏）。"""
+    agent_key: str
+    provider: str
+    enable_real: int
+    model: str
+    base_url: str
+    api_key_masked: str
+    api_key_configured: bool
+    timeout: int
+    real_active: bool
+    prompt: str = ""          # 自定义 System Prompt，空=使用默认
+    prompt_is_default: bool = True
+    output_schema: str = ""   # 自定义输出 Schema，空=使用默认
+    output_schema_is_default: bool = True
+
+
+class AgentModelConfigUpdate(BaseModel):
+    """单个 Agent 模型配置更新。
+    api_key 语义：None=不改，''=清除，非空=覆盖。
+    prompt 语义：None=不改，''=清除自定义恢复默认，非空=覆盖。
+    output_schema 语义：None=不改，''=清除自定义恢复默认，非空=覆盖。
+    """
+    provider: Optional[str] = None
+    enable_real: Optional[int] = None
+    model: Optional[str] = None
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    timeout: Optional[int] = None
+    prompt: Optional[str] = None
+    output_schema: Optional[str] = None
 
 
 # ==================== 归档病案 ====================

@@ -172,6 +172,27 @@ def _seed_patient_users() -> None:
             "gender": "女",
             "age": 32,
         },
+        # 扩展的 18 名患者用户（p003-p020）
+        {"patient_id": "p003", "patient_name": "王建国", "medical_card_number": "622202000003", "phone": "138****0003", "gender": "男", "age": 68},
+        {"patient_id": "p004", "patient_name": "刘芳", "medical_card_number": "622202000004", "phone": "138****0004", "gender": "女", "age": 35},
+        {"patient_id": "p005", "patient_name": "陈明", "medical_card_number": "622202000005", "phone": "138****0005", "gender": "男", "age": 42},
+        {"patient_id": "p006", "patient_name": "杨丽", "medical_card_number": "622202000006", "phone": "138****0006", "gender": "女", "age": 5},
+        {"patient_id": "p007", "patient_name": "徐浩", "medical_card_number": "622202000007", "phone": "138****0007", "gender": "男", "age": 28},
+        {"patient_id": "p008", "patient_name": "吴霞", "medical_card_number": "622202000008", "phone": "138****0008", "gender": "女", "age": 55},
+        {"patient_id": "p009", "patient_name": "孙磊", "medical_card_number": "622202000009", "phone": "138****0009", "gender": "男", "age": 32},
+        {"patient_id": "p010", "patient_name": "周梅", "medical_card_number": "622202000010", "phone": "138****0010", "gender": "女", "age": 72},
+        {"patient_id": "p011", "patient_name": "黄强", "medical_card_number": "622202000011", "phone": "138****0011", "gender": "男", "age": 48},
+        {"patient_id": "p012", "patient_name": "林静", "medical_card_number": "622202000012", "phone": "138****0012", "gender": "女", "age": 29},
+        {"patient_id": "p013", "patient_name": "郑伟", "medical_card_number": "622202000013", "phone": "138****0013", "gender": "男", "age": 61},
+        {"patient_id": "p014", "patient_name": "何娜", "medical_card_number": "622202000014", "phone": "138****0014", "gender": "女", "age": 38},
+        {"patient_id": "p015", "patient_name": "马超", "medical_card_number": "622202000015", "phone": "138****0015", "gender": "男", "age": 52},
+        {"patient_id": "p016", "patient_name": "朱琳", "medical_card_number": "622202000016", "phone": "138****0016", "gender": "女", "age": 24},
+        {"patient_id": "p017", "patient_name": "胡斌", "medical_card_number": "622202000017", "phone": "138****0017", "gender": "男", "age": 66},
+        {"patient_id": "p018", "patient_name": "高云", "medical_card_number": "622202000018", "phone": "138****0018", "gender": "女", "age": 41},
+        {"patient_id": "p019", "patient_name": "林涛", "medical_card_number": "622202000019", "phone": "138****0019", "gender": "男", "age": 37},
+        {"patient_id": "p020", "patient_name": "冯雪", "medical_card_number": "622202000020", "phone": "138****0020", "gender": "女", "age": 58},
+        # —— 测试专用患者：白纸身份，无任何历史就诊 ——
+        {"patient_id": "p021", "patient_name": "测试用户", "medical_card_number": "622202000021", "phone": "138****0021", "gender": "男", "age": 30},
     ]
     for u in users:
         store.add_patient_user(u)
@@ -317,6 +338,41 @@ def _seed_patients() -> None:
     store.upsert_patient(p002_state)  # type: ignore[arg-type]
     store.append_audit("p002", "seed", {"user_id": "system", "name": "系统"}, "初始化患者 p002 演示数据")
 
+    # ---------- 测试患者 p021：白纸身份，无历史就诊 ----------
+    p021_state = {
+        "patient_id": "p021",
+        "patient_name": "测试用户",
+        "gender": "男",
+        "age": 30,
+        "attending_doctor_ids": [],
+        "mdt_invitations": [],
+        "emr_main": {
+            "content": "",
+            "locked": False,
+            "locked_at": None,
+            "locked_by": None,
+            "locked_by_name": None,
+            "reports": [],
+        },
+        "treatment_versions": [],
+        "mdt_comments": [],
+        "check_tasks": [],
+        "bookings": [],
+        "orders": [],
+        "visit_timeline": [],
+        "triage_sessions": [],
+        "nurse_requests": [],
+        "enable_emr_subagent": False,
+        "enable_lab_subagent": False,
+        "audit_log": [],
+        "notify_queue": [],
+        "ai_draft": None,
+        "status": "waiting",
+        "hitl_pending": False,
+    }
+    store.upsert_patient(p021_state)  # type: ignore[arg-type]
+    store.append_audit("p021", "seed", {"user_id": "system", "name": "系统"}, "初始化测试患者 p021（白纸身份）")
+
 
 def _seed_buildings() -> None:
     """楼宇/楼层/房间种子数据。"""
@@ -344,12 +400,38 @@ def _seed_buildings() -> None:
 def _seed_exam_items() -> None:
     """检验/检查项目字典种子数据。"""
     items = [
-        ("CBC", "血常规", "blood", "EDTA抗凝血2ml", "WBC 4-10×10^9/L"),
-        ("LFT", "肝功能", "blood", "空腹抽血3ml", "ALT 0-40 U/L"),
-        ("ABD-US", "腹部B超", "ultrasound", "空腹，仰卧位", "无标准值，描述性报告"),
+        # —— 血液检验 (blood) ——
+        ("CBC", "血常规", "blood", "EDTA抗凝血2ml", "WBC 4-10×10^9/L，HGB 男120-160 g/L 女110-150 g/L"),
+        ("LFT", "肝功能", "blood", "空腹抽血3ml", "ALT 0-40 U/L，AST 0-40 U/L，TBIL 5-21 μmol/L"),
+        ("UA", "尿常规", "blood", "晨尿10ml", "蛋白(-)，潜血(-)，糖(-)，酮体(-)"),
+        ("BUN-Cr", "肾功能", "blood", "空腹抽血3ml", "BUN 3.9-7.1 mmol/L，Cr 男57-111 女41-81 μmol/L"),
+        ("ELECT", "电解质", "blood", "血清2ml", "K+ 3.5-5.3 mmol/L，Na+ 137-147 mmol/L，Ca2+ 2.11-2.52 mmol/L"),
+        ("COAG", "凝血功能", "blood", "枸橼酸钠抗凝血2ml", "PT 11-14s，APTT 30-45s，FIB 2-4 g/L"),
+        ("GLU", "空腹血糖", "blood", "空腹抽血2ml", "3.9-6.1 mmol/L"),
+        ("LIPID", "血脂四项", "blood", "空腹抽血3ml", "TC <5.2 mmol/L，TG <1.7 mmol/L，LDL-C <3.4 mmol/L"),
+        ("CARDIAC", "心肌酶谱", "blood", "血清3ml", "CK-MB 0-25 U/L，cTnI 0-0.04 ng/ml"),
+        # —— CT影像 (ct) ——
         ("CT-ABD", "腹部CT", "ct", "禁食4小时，增强需造影剂", "无标准值，描述性报告"),
-        ("EGD", "胃镜", "other", "禁食8小时", "无标准值，描述性报告"),
-        ("ECG", "心电图", "other", "静卧5分钟", "无标准值，描述性报告"),
+        ("CT-CHEST", "胸部CT", "ct", "去除金属物品，仰卧位", "无标准值，描述性报告"),
+        ("CT-HEAD", "头颅CT", "ct", "去除金属物品，仰卧位", "无标准值，描述性报告"),
+        # —— 超声 (ultrasound) ——
+        ("ABD-US", "腹部B超", "ultrasound", "空腹8小时，仰卧位", "无标准值，描述性报告"),
+        ("ECHO", "心脏B超", "ultrasound", "静卧5分钟，左侧卧位", "EF 55-70%，FS 25-35%"),
+        ("THYROID-US", "甲状腺B超", "ultrasound", "去除颈部饰物，仰卧位", "无标准值，描述性报告"),
+        ("RENAL-US", "泌尿系B超", "ultrasound", "憋尿充盈膀胱", "无标准值，描述性报告"),
+        # —— 病理 (pathology) ——
+        ("BIOPSY", "活检病理", "pathology", "病变部位取材，福尔马林固定", "病理诊断：良性/恶性/交界性"),
+        ("FROZEN", "术中冰冻", "pathology", "新鲜组织，OCT包埋", "术中快速病理诊断，术后石蜡病理确诊"),
+        ("CYTOLOGY", "细胞学检查", "pathology", "脱落细胞/穿刺液制片", "未见癌细胞/查见异型细胞/恶性肿瘤细胞"),
+        # —— 其他 (other) ——
+        ("EGD", "胃镜", "other", "禁食8小时，禁水2小时", "无标准值，描述性报告"),
+        ("COLONOSCOPY", "肠镜", "other", "肠道准备（清肠），禁食8小时", "无标准值，描述性报告"),
+        ("ECG", "心电图", "other", "静卧5分钟", "窦性心律，心率 60-100 bpm"),
+        ("HOLTER", "动态心电图", "other", "佩戴24小时，记录日常活动", "24小时总心率 8-12万次，无明显异常节律"),
+        ("CXR", "胸部X线", "other", "去除金属物品，站立位拍片", "双肺纹理清晰，心影不大"),
+        ("MRI-HEAD", "头颅MRI", "other", "去除金属物品，仰卧位", "无标准值，描述性报告"),
+        ("PFT", "肺功能", "other", "坐位，夹鼻嘴用力呼气", "FEV1 占预计值 ≥80%，FVC 正常"),
+        ("BMD", "骨密度", "other", "去除金属物品，仰卧位", "T值 ≥-1.0 SD 正常"),
     ]
     for code, name, cat, spec, ref in items:
         store.add_exam_item(code=code, name=name, category=cat, spec=spec, ref_range=ref)
@@ -392,6 +474,227 @@ def seed_all(store: Store) -> None:
     _seed_rag_docs()
     _seed_patient_users()
     _seed_patients()
+    _seed_oag_extended()
+    # 构建 OAG 内存对象图
+    try:
+        from app.graph.abox import get_ograph
+        og = get_ograph()
+        og.build_from_store(store)
+    except Exception as _e:
+        # OAG 构建失败不影响主流程
+        import sys
+        print(f"[OAG] 图谱构建警告: {_e}", file=sys.stderr)
+
+
+def _seed_oag_extended() -> None:
+    """扩展 Mock 数据：20+ 患者就诊链路（多科室/多报告/不同时段/不同当班医生）。
+
+    本函数在 _seed_patients() 之后调用，补充以下数据：
+    1. 扩展多科室（呼吸科、神经内科、骨科、儿科、眼科等）
+    2. 扩展医生（不同科室的当班医生）
+    3. 18 名新患者 + 20+ 就诊记录 + 对应报告/医嘱
+    4. 不同就诊时段（今日/昨日/上周/近3个月）
+    5. 跨渠道挂号（mini_app / kiosk / window）
+    """
+    from datetime import datetime, timedelta
+
+    # 1. 扩展科室
+    extra_depts = ["呼吸科", "神经内科", "骨科", "儿科", "眼科", "耳鼻喉科", "皮肤科", "精神心理科"]
+    for name in extra_depts:
+        store.add_department(name)
+
+    # 2. 扩展医生（与已有科室关联）
+    extra_doctors = [
+        {"user_id": "u_doc_02", "username": "chenwei", "password": "123456", "name": "陈伟", "role": "attending", "department": "呼吸科", "title": "副主任医师"},
+        {"user_id": "u_doc_03", "username": "liuming", "password": "123456", "name": "刘敏", "role": "attending", "department": "神经内科", "title": "主治医师"},
+        {"user_id": "u_doc_04", "username": "wangqiang", "password": "123456", "name": "王强", "role": "attending", "department": "骨科", "title": "副主任医师"},
+        {"user_id": "u_doc_05", "username": "zhaorui", "password": "123456", "name": "赵蕊", "role": "attending", "department": "儿科", "title": "主治医师"},
+        {"user_id": "u_doc_06", "username": "sunyang", "password": "123456", "name": "孙洋", "role": "attending", "department": "眼科", "title": "主治医师"},
+        {"user_id": "u_doc_07", "username": "zhouming", "password": "123456", "name": "周明", "role": "attending", "department": "皮肤科", "title": "主治医师"},
+        {"user_id": "u_doc_08", "username": "wugang", "password": "123456", "name": "吴刚", "role": "attending", "department": "心内科", "title": "副主任医师"},
+    ]
+    for doc in extra_doctors:
+        store.add_user({**doc, "active": True, "avatar": ""})
+
+    # 3. 扩展楼宇/房间
+    b4 = store.add_building("门诊楼B座")
+    f_b1 = store.add_floor(b4["building_id"], "1层")
+    store.bind_room(b4["building_id"], f_b1["floor_id"], "101诊室", "呼吸科")
+    store.bind_room(b4["building_id"], f_b1["floor_id"], "102诊室", "神经内科")
+    store.bind_room(b4["building_id"], f_b1["floor_id"], "103诊室", "骨科")
+    store.bind_room(b4["building_id"], f_b1["floor_id"], "104诊室", "儿科")
+    f_b2 = store.add_floor(b4["building_id"], "2层")
+    store.bind_room(b4["building_id"], f_b2["floor_id"], "201诊室", "眼科")
+    store.bind_room(b4["building_id"], f_b2["floor_id"], "202诊室", "耳鼻喉科")
+    store.bind_room(b4["building_id"], f_b2["floor_id"], "203诊室", "皮肤科")
+    store.bind_room(b4["building_id"], f_b2["floor_id"], "204诊室", "精神心理科")
+
+    b5 = store.add_building("医技楼B座")
+    f_c1 = store.add_floor(b5["building_id"], "1层")
+    store.bind_room(b5["building_id"], f_c1["floor_id"], "DR室", "影像科")
+    store.bind_room(b5["building_id"], f_c1["floor_id"], "核磁室", "影像科")
+    store.bind_room(b5["building_id"], f_c1["floor_id"], "脑电图室", "神经内科")
+
+    # 4. 生成 18 名患者的就诊链路
+    _generate_extended_patients()
+
+
+def _generate_extended_patients() -> None:
+    """生成 18 名患者 + 20+ 就诊链路。"""
+    from datetime import datetime, timedelta
+
+    today = datetime.now()
+    patients_data = [
+        # (patient_id, name, gender, age, dept, doctor_id, status, channel, days_ago)
+        ("p003", "王建国", "男", 68, "呼吸科", "u_doc_02", "in_progress", "mini_app", 0),    # 今日正在就诊
+        ("p003", "王建国", "男", 68, "呼吸科", "u_doc_02", "completed", "mini_app", -30),     # 30天前历史
+        ("p004", "刘芳", "女", 35, "神经内科", "u_doc_03", "waiting", "kiosk", 0),             # 今日候诊中
+        ("p005", "陈明", "男", 42, "骨科", "u_doc_04", "upcoming", "window", 1),               # 明日待就诊
+        ("p005", "陈明", "男", 42, "骨科", "u_doc_04", "completed", "mini_app", -60),          # 60天前历史
+        ("p006", "杨丽", "女", 5, "儿科", "u_doc_05", "in_progress", "kiosk", 0),             # 今日正在就诊
+        ("p007", "徐浩", "男", 28, "眼科", "u_doc_06", "completed", "mini_app", -7),           # 7天前完成
+        ("p007", "徐浩", "男", 28, "眼科", "u_doc_06", "upcoming", "mini_app", 2),             # 后天复诊
+        ("p008", "吴霞", "女", 55, "皮肤科", "u_doc_07", "waiting", "window", 0),              # 今日候诊
+        ("p009", "孙磊", "男", 32, "心内科", "u_doc_08", "in_progress", "mini_app", 0),        # 今日正在就诊
+        ("p009", "孙磊", "男", 32, "心内科", "u_doc_08", "completed", "kiosk", -90),          # 90天前历史
+        ("p010", "周梅", "女", 72, "消化内科", "u_att_01", "completed", "mini_app", -14),      # 14天前
+        ("p011", "黄强", "男", 48, "呼吸科", "u_doc_02", "completed", "window", -21),          # 21天前
+        ("p012", "林静", "女", 29, "神经内科", "u_doc_03", "upcoming", "mini_app", 3),         # 3天后
+        ("p013", "郑伟", "男", 61, "骨科", "u_doc_04", "completed", "kiosk", -45),            # 45天前
+        ("p014", "何娜", "女", 38, "儿科", "u_doc_05", "completed", "mini_app", -10),         # 10天前
+        ("p015", "马超", "男", 52, "眼科", "u_doc_06", "upcoming", "window", 1),              # 明日
+        ("p016", "朱琳", "女", 24, "皮肤科", "u_doc_07", "in_progress", "mini_app", 0),       # 今日
+        ("p017", "胡斌", "男", 66, "心内科", "u_doc_08", "waiting", "kiosk", 0),              # 今日
+        ("p018", "高云", "女", 41, "消化内科", "u_att_01", "upcoming", "mini_app", 2),        # 后天
+        ("p019", "林涛", "男", 37, "神经内科", "u_doc_03", "completed", "window", -15),       # 15天前
+        ("p020", "冯雪", "女", 58, "呼吸科", "u_doc_02", "upcoming", "kiosk", 1),             # 明日
+    ]
+
+    # 房间映射（从 store 动态查找）
+    room_map = {}
+    for bld in store.buildings.values():
+        for floor in bld.get("floors", []):
+            for room in floor.get("rooms", []):
+                r_dept = room.get("dept_name", "")
+                r_name = room.get("name", "")
+                b_name = bld.get("name", "")
+                f_name = floor.get("name", "")
+                if r_dept not in room_map:
+                    room_map[r_dept] = []
+                room_map[r_dept].append({
+                    "building_name": b_name,
+                    "floor_name": f_name,
+                    "room_name": r_name,
+                })
+
+    seen_patients = {}
+    for pid, pname, gender, age, dept, doctor_id, status, channel, days_offset in patients_data:
+        slot_date = (today + timedelta(days=days_offset)).strftime("%Y-%m-%d")
+        start_time = f"{slot_date}T09:00:00+08:00" if days_offset <= 0 else f"{slot_date}T14:00:00+08:00"
+        end_time = f"{slot_date}T10:00:00+08:00" if days_offset <= 0 else f"{slot_date}T15:00:00+08:00"
+
+        # 查找房间
+        rooms = room_map.get(dept, [])
+        room = rooms[0] if rooms else {"building_name": "门诊楼", "floor_name": "1层", "room_name": "101诊室"}
+
+        # 挂号记录
+        booking_id = uid("bk")
+        booking = {
+            "booking_id": booking_id,
+            "patient_id": pid,
+            "patient_name": pname,
+            "department": dept,
+            "doctor_id": doctor_id,
+            "doctor_name": "",
+            "slot_date": slot_date,
+            "slot_time": "09:00-10:00",
+            "start_time": start_time,
+            "end_time": end_time if status == "completed" else None,
+            "queue_number": 1 + abs(days_offset),
+            "estimated_wait": 15 * (1 + abs(days_offset)),
+            "building_name": room["building_name"],
+            "floor_name": room["floor_name"],
+            "room_name": room["room_name"],
+            "channel": channel,
+            "status": status,
+            "created_at": start_time,
+        }
+
+        # 获取医生名
+        doc = store.get_user(doctor_id)
+        if doc:
+            booking["doctor_name"] = doc.get("name", "")
+
+        # 构造患者状态
+        if pid not in seen_patients:
+            seen_patients[pid] = {
+                "patient_id": pid,
+                "patient_name": pname,
+                "gender": gender,
+                "age": age,
+                "attending_doctor_ids": [doctor_id],
+                "mdt_invitations": [],
+                "emr_main": {
+                    "content": f"患者{pname}，{gender}，{age}岁，因{dept}相关症状就诊。",
+                    "locked": False,
+                    "locked_at": None,
+                    "locked_by": None,
+                    "locked_by_name": None,
+                    "reports": [],
+                },
+                "treatment_versions": [],
+                "mdt_comments": [],
+                "check_tasks": [],
+                "bookings": [],
+                "orders": [],
+                "visit_timeline": [],
+                "triage_sessions": [],
+                "nurse_requests": [],
+                "enable_emr_subagent": False,
+                "enable_lab_subagent": False,
+                "audit_log": [],
+                "notify_queue": [],
+                "ai_draft": None,
+                "status": status,
+                "hitl_pending": False,
+            }
+
+        state = seen_patients[pid]
+        state["bookings"].append(booking)
+
+        # 生成报告（对已完成的就诊）
+        if status == "completed":
+            report_id = uid("rpt")
+            report = {
+                "report_id": report_id,
+                "patient_id": pid,
+                "visit_id": booking_id,
+                "report_type": "综合报告",
+                "content": f"【{dept}】{pname}的诊疗报告：病情稳定，建议定期复查。",
+                "report_time": end_time,
+                "status": "finalized",
+            }
+            if isinstance(state["emr_main"], dict):
+                state["emr_main"]["reports"].append(report)
+
+            # 添加检查任务
+            state["check_tasks"].append({
+                "task_id": uid("tsk"),
+                "task_type": "blood",
+                "task_label": "血常规",
+                "status": "done",
+                "created_at": start_time,
+                "created_by": doctor_id,
+                "created_by_name": doc.get("name", "") if doc else "",
+                "completed_at": end_time,
+                "result": {"summary": "各项指标基本正常"},
+                "visit_id": booking_id,
+            })
+
+    # 批量写入
+    for pid, state in seen_patients.items():
+        store.upsert_patient(state)
+        store.append_audit(pid, "seed", {"user_id": "system", "name": "系统"}, f"扩展患者 {pid} 就诊链路")
 
 
 # 导入即播种

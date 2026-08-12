@@ -119,8 +119,24 @@
               </div>
             </div>
           </div>
-          <div v-else class="px-5 py-8 text-center text-sm text-slate-400">
-            暂无待办事项
+          <div v-if="completedTasks.length" class="p-4 space-y-2 border-t border-slate-100">
+            <p class="text-xs text-slate-400 mb-2">已完成就诊</p>
+            <div
+              v-for="(task, idx) in completedTasks"
+              :key="'c'+idx"
+              class="flex items-center gap-3 p-3 rounded-xl bg-slate-50 border border-slate-100"
+            >
+              <div class="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-sm">
+                {{ task.icon }}
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-slate-600 truncate">{{ task.title }}</p>
+                <p class="text-xs text-slate-400 mt-0.5">{{ task.desc }}</p>
+              </div>
+            </div>
+          </div>
+          <div v-if="!pendingTasks.length && !completedTasks.length" class="px-5 py-8 text-center text-sm text-slate-400">
+            暂无就诊动态
           </div>
         </section>
 
@@ -157,12 +173,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { usePatientStore } from '../../stores/patient'
 import { patientApi } from '../../api/patient'
 
 const router = useRouter()
+const route = useRoute()
 const patientStore = usePatientStore()
 
 const fontClass = computed(() => patientStore.fontClass)
@@ -204,6 +221,7 @@ const activeNav = computed(() => {
 
 const timeline = ref([])
 const pendingTasks = ref([])
+const completedTasks = ref([])
 
 function navigateTo(path) {
   router.push(path)
@@ -216,22 +234,30 @@ async function loadData() {
       patientApi.getTimeline(),
     ])
 
-    if (timelineRes.status === 'fulfilled' && timelineRes.value?.events) {
-      timeline.value = timelineRes.value.events.map((e) => ({
+    if (timelineRes.status === 'fulfilled' && Array.isArray(timelineRes.value)) {
+      timeline.value = timelineRes.value.map((e) => ({
         title: e.title || e.description || '就诊事件',
         time: e.time || e.created_at || '',
         status: e.status || 'pending',
       }))
     }
 
-    if (bookingsRes.status === 'fulfilled' && bookingsRes.value?.bookings) {
-      const pending = bookingsRes.value.bookings.filter(
-        (b) => b.status === 'pending' || b.status === 'scheduled'
+    if (bookingsRes.status === 'fulfilled' && Array.isArray(bookingsRes.value)) {
+      const all = bookingsRes.value
+      const pending = all.filter(
+        (b) => ['pending', 'scheduled', 'upcoming', 'waiting', 'in_progress', 'booked'].includes(b.status)
       )
       pendingTasks.value = pending.map((b) => ({
         icon: '📋',
-        title: b.title || `${b.department || ''} 预约`,
-        desc: b.time || b.scheduled_at || '',
+        title: `${b.department || ''} ${b.statusText || '预约'}`,
+        desc: `${b.slot_date || ''} ${b.slot_time || ''}`,
+      }))
+      // Also show completed ones as "history"
+      const completed = all.filter((b) => b.status === 'completed')
+      completedTasks.value = completed.map((b) => ({
+        icon: '✅',
+        title: `${b.department || ''} 就诊完成`,
+        desc: `${b.slot_date || ''} ${b.slot_time || ''}`,
       }))
     }
   } catch (e) {
@@ -241,5 +267,12 @@ async function loadData() {
 
 onMounted(() => {
   loadData()
+})
+
+// 从其他页面返回时重新加载数据
+watch(() => route.fullPath, (newPath) => {
+  if (newPath === '/patient/home') {
+    loadData()
+  }
 })
 </script>

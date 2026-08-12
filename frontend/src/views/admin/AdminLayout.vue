@@ -65,7 +65,7 @@ const menuGroups = [
   {
     title: 'Agent配置',
     items: [
-      { to: '/admin/agents', label: 'Agent开关' },
+      { to: '/admin/agents', label: 'Agent配置' },
       { to: '/admin/permissions', label: '权限矩阵' },
     ],
   },

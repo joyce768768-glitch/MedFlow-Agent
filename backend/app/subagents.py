@@ -95,15 +95,99 @@ def lab_summary_subagent(check_tasks: list) -> str:
     return "\n".join(lines)
 
 
-def patient_triage_subagent(patient_id: str, message: str, session_history: list = None) -> dict:
-    """AI 导诊 SubAgent（Mock）：采集症状，推荐 2-3 个科室及置信度。
+def emr_chat_subagent(patient_id: str, message: str, history: list = None,
+                      patient_context: str = "", kb_context: str = "") -> dict:
+    """病历辅助对话 SubAgent：多轮对话辅助医生起草/优化 SOAP 病历。
 
-    真实实现：调用 LLM 分析症状，结合科室知识库推荐。
-    Demo：基于关键词匹配 + 规则生成推荐，不依赖外部 LLM。
+    接入策略（per-agent 模型配置优先于全局 settings）：
+    · 读取 store.get_agent_model_config("emr_agent") 作为模型配置
+    · 读取 store.get_agent_prompt("emr_agent") 作为自定义 Prompt
+    · 读取 store.get_agent_output_schema("emr_agent") 作为自定义输出 Schema
+    · provider=mock 或 enable_real=0 → 走本地规则
+    · provider=openai_compatible + enable_real=1 + api_key → 真 LLM 多轮对话
+    · 真 LLM 调用失败自动降级 Mock，保证服务不中断
+    · 输出仅为草稿建议，需医生 HITL 确认后才可采纳到正式病历
     """
-    msg = message.lower()
+    try:
+        from app.llm_client import run_emr_chat_llm
+        from app.storage import store
+        try:
+            mc = store.get_agent_model_config("emr_agent")
+            ap = store.get_agent_prompt("emr_agent")
+            aos = store.get_agent_output_schema("emr_agent")
+        except Exception:
+            mc = None
+            ap = ""
+            aos = ""
+        result = run_emr_chat_llm(
+            message=message,
+            history=history,
+            patient_context=patient_context,
+            kb_context=kb_context,
+            model_config=mc,
+            agent_prompt=ap,
+            agent_output_schema=aos,
+        )
+        result.setdefault("trace_id", f"emr_{patient_id}_{result.get('trace_id','')[-8:]}")
+        return result
+    except Exception as _e:
+        import sys
+        print(f"[emr chat] run_emr_chat_llm 异常，降级 Mock: {_e}", file=sys.stderr)
+        from app.llm_client import _mock_emr_chat, _mock_emr_structured_output
+        reply = _mock_emr_chat(message, history or [], patient_context)
+        structured = _mock_emr_structured_output(message, patient_context)
+        return {
+            "reply": reply,
+            "structured_output": structured,
+            "provider_used": "mock",
+            "fallback_reason": f"异常降级: {_e}",
+            "trace_id": f"emr_{patient_id}_fallback",
+        }
 
-    # Mock 规则匹配：根据关键词推荐科室
+
+def patient_triage_subagent(patient_id: str, message: str, session_history: list = None, kb_context: str = "") -> dict:
+    """AI 导诊 SubAgent：采集症状，推荐 2-3 个科室及置信度。
+
+    接入策略（per-agent 模型配置优先于全局 settings）：
+    · 读取 store.get_agent_model_config("patient_triage_agent") 作为模型配置
+    · provider=mock 或 enable_real=0 → 走本地关键词规则（Mock，零密钥依赖）
+    · provider=openai_compatible + enable_real=1 + api_key → 真 LLM
+    · 真 LLM 调用失败自动降级 Mock，保证服务不中断
+    · 必带强风控免责声明：输出固定提示「仅导诊参考，最终科室以护士/医生确认为准」
+
+    kb_context 用于注入 RAG 召回的科室就诊须知/检查注意事项，增强导诊推荐的合理性。
+    """
+    try:
+        from app.llm_client import run_triage_llm
+        from app.storage import store
+        # 读取 per-agent 模型配置 + 自定义 Prompt（后台 Agent 配置页可在线修改，热更新生效）
+        try:
+            mc = store.get_agent_model_config("patient_triage_agent")
+            ap = store.get_agent_prompt("patient_triage_agent")
+        except Exception:
+            mc = None
+            ap = ""
+        result = run_triage_llm(
+            symptom_text=message,
+            kb_context=kb_context,
+            session_history=session_history,
+            model_config=mc,
+            agent_prompt=ap,
+        )
+        # subagents 原始返回结构兼容：补 trace_id 一致性
+        result.setdefault("trace_id", f"triage_{patient_id}_{result.get('trace_id','')[-8:]}")
+        return result
+    except Exception as _e:
+        import sys
+        print(f"[triage] run_triage_llm 异常，降级 Mock: {_e}", file=sys.stderr)
+        # 异常兜底：纯 Mock 规则
+        return _mock_triage_fallback(patient_id, message)
+
+
+def _mock_triage_fallback(patient_id: str, message: str) -> dict:
+    """Mock 本地规则兜底（原 patient_triage_subagent 逻辑）。"""
+    import uuid
+    msg = message.lower()
     dept_rules = {
         "消化内科": ["腹痛", "胃痛", "恶心", "呕吐", "腹泻", "便秘", "反酸", "腹胀", "上腹痛"],
         "心内科": ["胸痛", "胸闷", "心悸", "心慌", "气短", "呼吸困难", "血压"],
@@ -114,7 +198,6 @@ def patient_triage_subagent(patient_id: str, message: str, session_history: list
         "耳鼻喉科": ["耳鸣", "眩晕", "鼻炎", "中耳炎"],
         "内分泌科": ["血糖", "糖尿病", "甲状腺", "肥胖"],
     }
-
     scored = []
     for dept, keywords in dept_rules.items():
         hit = sum(1 for kw in keywords if kw in msg)
@@ -125,30 +208,26 @@ def patient_triage_subagent(patient_id: str, message: str, session_history: list
                 "confidence": round(confidence, 2),
                 "reason": f"症状匹配：{', '.join(kw for kw in keywords if kw in msg)}",
             })
-
-    # 如果没有匹配，给默认推荐
     if not scored:
         scored = [
             {"dept_name": "全科医学科", "confidence": 0.6, "reason": "症状不典型，建议全科首诊"},
             {"dept_name": "内科", "confidence": 0.4, "reason": "常见内科症状"},
         ]
-
-    # 按置信度排序，取 top 2-3
     scored.sort(key=lambda x: x["confidence"], reverse=True)
     recommended = scored[:3]
-
-    # Mock Agent 回复
     reply = (
         f"您好，我是 AI 导诊助手。根据您描述的症状，"
         f"我为您推荐了 {len(recommended)} 个科室："
         f"{'、'.join(d['dept_name'] for d in recommended)}。"
         f"置信度最高的是 {recommended[0]['dept_name']}（{recommended[0]['confidence']*100:.0f}%）。"
-        f"建议您预约 {recommended[0]['dept_name']} 的门诊进一步就诊。"
+        f"建议您预约 {recommended[0]['dept_name']} 的门诊进一步就诊。\n\n"
+        "【免责声明】AI建议仅为就诊分诊参考，不构成诊断与医嘱，最终就诊方案请遵医护人员判断。"
     )
-
     return {
         "reply": reply,
         "recommended_departments": recommended,
         "collected_symptoms": msg,
         "trace_id": f"triage_{patient_id}_{uuid.uuid4().hex[:8]}",
+        "provider_used": "mock_fallback",
+        "fallback_reason": None,
     }

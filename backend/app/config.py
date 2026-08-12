@@ -1,7 +1,7 @@
 """全局配置：从环境变量读取，Demo 不依赖任何真实密钥。"""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,6 +26,21 @@ class Settings(BaseSettings):
     # SubAgent 默认开关
     default_enable_emr_subagent: int = 1
     default_enable_lab_subagent: int = 1
+
+    # —— LLM（智能导诊 SubAgent）——
+    # provider: "mock" 走本地关键词规则（默认，无密钥依赖）
+    # provider: "openai_compatible" 走 OpenAI 兼容接口，兼容：
+    #   · 通义千问 DashScope（base_url=https://dashscope.aliyuncs.com/compatible-mode/v1）
+    #   · 智谱 GLM（base_url=https://open.bigmodel.cn/api/paas/v4）
+    #   · DeepSeek（base_url=https://api.deepseek.com/v1）
+    #   · 开源医疗模型 Ollama/vLLM 本地部署（base_url=http://localhost:11434/v1）
+    llm_provider: str = "mock"
+    llm_api_key: Optional[str] = None
+    llm_base_url: Optional[str] = None
+    llm_model: str = "qwen-plus"
+    llm_timeout: int = 30
+    # 导诊 SubAgent 用不用真 LLM（=True 时 llm_provider 不能是 mock）
+    llm_enable_triage_real: int = 0
 
     @property
     def cors_origin_list(self) -> List[str]:

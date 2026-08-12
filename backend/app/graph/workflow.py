@@ -13,7 +13,10 @@
 """
 from __future__ import annotations
 
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import END, StateGraph
+
+# START 常量在不同版本 langgraph 中名称不同，使用 set_entry_point API
+START = "__start__"
 
 from app.graph.nodes import (
     node_admit_emr,

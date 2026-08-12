@@ -119,6 +119,93 @@ PatientState {
 
 ---
 
+## 六之二、医疗轻量 OAG 底座（TBox + ABox 本体语义规范）
+
+> 全平台所有 Agent 的唯一可信数据底座，**不引入重型 OWL 推理机**，以代码层实现公理校验。
+> 代码位置：`backend/app/graph/ontology.py`（TBox 类定义+公理校验）、`backend/app/graph/abox.py`（内存对象图）、`backend/app/graph/temporal_query.py`（时态图查询）。
+
+### 6.2.1 TBox 固定实体类定义（Schema 层）
+
+| 类 | 命名空间 | 核心属性 | 说明 |
+| --- | --- | --- | --- |
+| `Patient` | `Person` | patient_id, patient_name, gender, age | 患者，与 `Doctor` 业务身份互斥 |
+| `Doctor` | `Person` | doctor_id, doctor_name, title | 医生，可多条 `work_in` 关系（含时效性） |
+| `Nurse` | `Person` | nurse_id, nurse_name | 护士 |
+| `Department` | `Space` | dept_id, dept_name, category | 科室 |
+| `Room` | `Space` | room_id, room_name, building, floor | 房间/诊室 |
+| `VisitRecord` | `MedicalFlow` | visit_id, patient_id, start_time, end_time, status | 就诊记录（核心时态锚点） |
+| `ExamReport` | `MedicalFlow` | report_id, patient_id, visit_id, report_type, content | 检验/影像报告 |
+| `ExamItem` | `MedicalFlow` | item_code, item_name, category, spec | 检验/检查项目字典 |
+| `OrderRecord` | `MedicalFlow` | order_id, patient_id, visit_id, order_type | 医嘱/开立记录 |
+
+### 6.2.2 TBox 固定关系定义（对象关系，强业务语义）
+
+| 关系 | 源类 → 目标类 | 业务语义 | 时态属性 |
+| --- | --- | --- | --- |
+| `work_in` | `Doctor` → `Department` | 医生任职科室 | valid_time: [start, end]，每日排班动态生效 |
+| `locate_in` | `Department` → `Room` | 科室对应诊室 | valid_time: 长期有效 |
+| `has_visit` | `Patient` → `VisitRecord` | 患者拥有就诊记录 | valid_time: 就诊时段 |
+| `generate` | `VisitRecord` → `ExamReport` | 就诊产生报告 | valid_time: 报告生成时间 |
+| `belong_to` | `ExamReport` → `Patient` | 报告唯一归属患者 | valid_time: 长期有效 |
+| `execute_in` | `VisitRecord` → `Room` | 就诊发生诊室 | valid_time: 就诊时段 |
+| `order_item` | `OrderRecord` → `ExamItem` | 医嘱开立项目 | valid_time: 开立时间 |
+
+### 6.2.3 TBox 核心公理（代码层强制校验）
+
+| 公理 | 约束 | 代码实现 |
+| --- | --- | --- |
+| **唯一归属公理** | 一份 `ExamReport` 恰好 1 个 `Patient` | `validate_belong_to_uniqueness()` — 创建报告时强制校验 |
+| **身份互斥公理** | `Doctor` 与 `Patient` 业务身份完全互斥 | `validate_identity_mutex()` — 注册时校验，同一 user_id 不可同时为医生和患者 |
+| **时态核心公理** | 所有关系带 `valid_time: [start, end]` | 边创建时强制写入，查询时必须传时间窗口 |
+| **基数约束** | 一条 `VisitRecord` 仅归属一个 `Patient` | `validate_visit_cardinality()` — 创建就诊记录时校验 |
+| **上下文隔离公理** | 默认查询仅返回「本次就诊」数据 | `temporal_query.py` 所有函数强制 `time_window` 参数，不传则默认本次就诊 |
+
+### 6.2.4 ABox 内存对象图结构
+
+```
+OGraph (内存单例)
+├── nodes: Dict[node_id, {type, data, create_time, valid_time}]
+│   ├── type: Patient/Doctor/Nurse/Department/Room/VisitRecord/ExamReport/ExamItem/OrderRecord
+│   └── data: 对应实体的完整属性字典
+├── edges: List[{source_id, target_id, rel_type, valid_time, create_time, permission_tag, trace_id}]
+│   ├── rel_type: work_in / locate_in / has_visit / generate / belong_to / execute_in / order_item
+│   └── valid_time: [start_iso, end_iso]  # None 表示长期有效
+└── meta: {version, last_sync, axiom_checks_enabled}
+```
+
+### 6.2.5 三类时态图查询（上层 Agent 直接调用）
+
+| 查询函数 | 输入 | 输出 | 核心用途 |
+| --- | --- | --- | --- |
+| `patient_full_chain(patient_id, time_window)` | 患者ID + 时间窗口 | 就诊记录+全部报告+医生+房间+时段 | MDT 会诊资料自动聚合 |
+| `visit_context_isolation(visit_id)` | 就诊ID | 隔离的本次就诊全链路数据（不含历史） | 防止信息混杂，默认隔离 |
+| `doctor_on_duty(doctor_id, date)` | 医生ID + 日期 | 当日接诊患者+诊室+病例资料 | 下班复盘、MDT 讨论 |
+
+### 6.2.6 工程落地规则
+
+- **不引入 Neo4j**：优先「内存模拟对象图 + 结构化 Schema 校验」，可无缝对接后续图库
+- **公理代码校验**：所有 TBox 公理通过 `ontology.py` 校验函数实现，不依赖 OWL 推理机
+- **时态熔断**：默认所有查询带 `time_window`，不传则默认只返回本次就诊数据
+- **权限标签**：每条边携带 `permission_tag`，适配医疗合规审计
+- **溯源 ID**：每条边携带 `trace_id`，打通 LangGraph TraceId
+
+### 6.2.7 三端统一数据同源规则
+
+| 端 | 读取层 | 写入层 | 权限控制 |
+| --- | --- | --- | --- |
+| 患者端 H5 | OGraph + 只读视图隔离 | 仅 AI 导诊会话写入 | role=patient，隔离 ai_draft/mdt_comments |
+| 医生 PC 工作台 | OGraph + 全链路视图 | 病历/方案/检查/MDT | role=attending/mdt_expert/nurse/readonly |
+| 后台管理 | OGraph + 审计视图 | 主数据/RAG/Agent配置 | role=admin，require_admin 依赖保护 |
+
+### 6.2.8 严格禁止清单
+
+- ❌ 不搭建疾病/症状/药理医学知识图谱（二期再做）
+- ❌ 不引入 OWL DL 推理、复杂描述逻辑推理
+- ❌ Agent 不自主生成诊疗方案、诊断结论
+- ❌ 不做无时间隔离的全量数据遍历（默认时间窗口熔断）
+
+---
+
 ## 七、权限与视图规则
 
 - **动作权限**（能不能编辑 / 采纳 / 开单）与 **病例数据范围**（能看哪些患者）解耦，后端强制二次鉴权，前端仅做视图显隐。
@@ -156,7 +243,7 @@ MDT 评论规则：提交后冻结、不可修改删除；采纳标记（`is_ado
 | --- | --- | --- |
 | 基础主数据 | `/admin/buildings` `/admin/departments` `/admin/users` `/admin/exam-items` | 楼宇/楼层/房间绑定科室、科室 CRUD、医生人员管理、检验项目字典 |
 | RAG 知识库 | `/admin/rag` `/admin/kb` | 文档上传自动 Mock 分块+向量、版本启停、Mock 召回测试面板；简易知识库为旧版接口保留 |
-| Agent 配置 | `/admin/agents` `/admin/permissions` | SubAgent 全局开关 + 单医院灰度覆盖；权限矩阵 4 角色×11 动作 |
+| Agent 配置 | `/admin/agents` `/admin/permissions` | SubAgent 全局开关 + 单医院灰度覆盖；病历 Agent 支持自定义 System Prompt + Output Schema（SOAP 结构化输出）；权限矩阵 4 角色×11 动作 |
 | 病案 & 审计 | `/admin/cases` `/admin/audit` | 归档病案只读查阅（5 Tab）+ 系统审计日志（前后快照对比） |
 
 ### 7.2.3 接口与数据规范
@@ -256,17 +343,24 @@ MDT 评论规则：提交后冻结、不可修改删除；采纳标记（`is_ado
 ├── backend/
 │   ├── main.py                      # FastAPI 入口
 │   ├── requirements.txt
+│   ├── .env.example                 # 环境变量模板
+│   ├── scripts/                     # 验证脚本
 │   ├── app/
 │   │   ├── config.py                # 环境变量配置
 │   │   ├── auth.py                  # JWT + RBAC + 资源级权限依赖
 │   │   ├── schemas.py               # Pydantic 契约
 │   │   ├── storage.py               # 内存 Mock 存储（单例）
 │   │   ├── mock_data.py             # 演示账号 + 患者种子数据 + 主数据/RAG/患者用户种子
-│   │   ├── subagents.py             # Mock LLM（病历草稿 / 检验汇总 / 患者导诊）
+│   │   ├── subagents.py             # SubAgent 编排（病历草稿 / 检验汇总 / 患者导诊）
+│   │   ├── llm_client.py            # LLM 客户端（真实+Mock 双模式，含 Output Schema 注入与结构化解析）
 │   │   ├── graph/
+│   │   │   ├── ontology.py          # TBox 本体：实体/关系/公理定义
 │   │   │   ├── state.py             # PatientState TypedDict（含患者端扩展字段）
 │   │   │   ├── nodes.py             # 7 个节点（方案A 同节点 if 分支）
-│   │   │   └── workflow.py          # LangGraph 主图 + MDT 子图
+│   │   │   ├── workflow.py          # LangGraph 主图 + MDT 子图
+│   │   │   ├── abox.py              # ABox 内存对象图（节点/边/时态图）
+│   │   │   └── temporal_query.py    # 时态图查询（患者全链路/就诊隔离/医生值班）
+│   │   ├── tests/                   # OAG 图谱测试
 │   │   └── routers/                 # auth/patients/treatment/mdt/check_tasks/
 │   │       │                        # emr/config/notify/admin/admin_ext/patient_ext
 │   │       ├── admin.py             # 旧版后台：用户/科室/权限矩阵/简易知识库
@@ -280,11 +374,11 @@ MDT 评论规则：提交后冻结、不可修改删除；采纳标记（`is_ado
 │       ├── api/index.js  api/admin.js  api/patient.js
 │       ├── views/
 │       │   ├── Login.vue  Workstation.vue  SubAgentConfig.vue
-│       │   ├── admin/  # AdminLayout + 9 个管理页
+│       │   ├── admin/  # AdminLayout + 11 个管理页
 │       │   └── patient/  # 患者端 H5（Login/Home/Triage/Booking/
 │       │                  # Timeline/Reports/Navigation/Profile/
 │       │                  # PatientLayout/PatientBottomNav/NurseAssistFab）
-│       └── components/  # PatientList/PatientDetail/TreatmentPanel/...
+│       └── components/  # PatientList/PatientDetail/TreatmentPanel/AiDraftPanel/...
 ├── .gitignore  .env.example
 └── README.md
 ```
@@ -352,7 +446,7 @@ npm run dev
 ## 十二、演示动线建议
 
 1. 用 `attending` 登录 → 选择患者「张伟」→ 查看诊疗方案 v2、定稿锁定的主病历、折叠的历史版本。
-2. 点「生成 AI 病历草稿」→ 观察 AI 草稿出现在**独立侧边面板**，未自动写入正式病历（HITL 隔离）。
+2. 点「生成 AI 病历草稿」→ 观察 AI 草稿出现在**独立侧边面板**，未自动写入正式病历（HITL 隔离）；回复下方附带「📋 SOAP 结构化草稿」卡片，按 Output Schema 模板渲染主诉/现病史/评估/诊疗计划等字段。
 3. 切到「检查任务看板」→ 开立 CT → 推进状态 → 完成 → 点「检验汇总 SubAgent」。
 4. 切到「MDT 讨论区」→ 邀请专家 → 采纳一条意见 → 查看采纳留痕。
 5. 进入「SubAgent 配置」→ 关闭病历 SubAgent → 回工作台再点「生成 AI 草稿」，观察走人工编辑路径（方案A 同节点分支）。
@@ -360,7 +454,7 @@ npm run dev
 7. 用 `admin` 登录 → 进入 `/admin` 后台管理：
    - **基础主数据**：楼宇/楼层/房间绑定科室、科室 CRUD、医生人员管理、检验项目字典（CT/B超/抽血等标准化编码）。
    - **RAG 知识库**：上传文档自动 Mock 分块 + Mock 向量；启用/停用版本；Mock 召回测试面板（纯 Mock，不接真实向量库）。
-   - **Agent 配置**：病历辅助 Agent / 影像初筛 Agent 的全局开关 + 单医院灰度覆盖；切换即落审计日志。
+   - **Agent 配置**：病历辅助 Agent / 影像初筛 Agent 的全局开关 + 单医院灰度覆盖；病历 Agent 支持自定义 System Prompt 与 Output Schema（SOAP 结构化输出 JSON 模板），可在 AI 草稿面板中渲染结构化病历卡片；切换即落审计日志。
    - **病案查阅**：归档病案只读快照，5 个 Tab（主病历 / 诊疗多版本 / MDT 讨论 / 检查任务流转 / 全流程审计），禁止编辑原始留痕。
    - **系统审计日志**：跨患者的后台操作留痕（主数据修改 / Agent 开关 / 启停 / 归档），点击查看前后快照对比。
    - **权限矩阵 / 简易知识库**：4 角色 × 11 动作开关 + 4 类知识库条目 CRUD（保留旧版接口）。
@@ -451,7 +545,74 @@ git push -u origin main
 
 ---
 
-## 十五、技术栈
+## 十五、病历 Agent 输出 Schema 配置
+
+病历辅助 Agent (`emr_agent`) 支持**自定义输出 Schema**，用于约束 LLM 按结构化 SOAP 格式输出病历草稿。管理员可在后台为 Agent 配置：
+
+### 15.1 配置入口
+
+后台管理 → Agent 配置 → 病历辅助 Agent → **输出 Schema** 编辑区
+
+### 15.2 默认 Schema（SOAP 结构）
+
+```json
+{
+  "chief_complaint": "主诉",
+  "present_illness": "现病史",
+  "past_history": "既往史",
+  "examination": "查体",
+  "assessment": "评估",
+  "differential_diagnosis": ["鉴别诊断1", "鉴别诊断2"],
+  "risk_flags": ["风险提示"],
+  "plan": "诊疗计划"
+}
+```
+
+### 15.3 工作流程
+
+```mermaid
+flowchart LR
+    A[医生发送指令] --> B{Agent 配置}
+    B -->|Output Schema 自定义| C[注入自定义 Schema 到 System Prompt]
+    B -->|Output Schema 为空| D[注入默认 Schema]
+    C --> E[LLM 生成 SOAP 结构化输出]
+    D --> E
+    E --> F[正则解析提取 JSON]
+    F --> G[后端返回 structured_output]
+    G --> H[前端渲染 SOAP 卡片]
+    style H fill:#c8e6c9,color:#1a5e20
+    style G fill:#bbdefb,color:#0d47a1
+```
+
+### 15.4 关键文件
+
+| 文件 | 职责 |
+| --- | --- |
+| `backend/app/storage.py` | `output_schema` 字段 + `get_agent_output_schema()` / `update_agent_output_schema()` |
+| `backend/app/llm_client.py` | `DEFAULT_EMR_OUTPUT_SCHEMA` + Schema 注入 + `_parse_emr_output()` 解析 |
+| `backend/app/subagents.py` | 传递 `output_schema` 到 LLM 客户端 |
+| `frontend/src/views/admin/AdminAgentConfig.vue` | Output Schema 编辑区 UI |
+| `frontend/src/components/AiDraftPanel.vue` | SOAP 结构化卡片渲染 |
+
+---
+
+## 十六、检验项目字典
+
+系统内置 **27 个检验/检查项目**，覆盖 5 大分类：
+
+| 分类 | 数量 | 项目示例 |
+| --- | --- | --- |
+| 血液检验 (blood) | 9 | 血常规、肝功能、尿常规、肾功能、电解质、凝血功能、空腹血糖、血脂四项、心肌酶谱 |
+| CT影像 (ct) | 3 | 腹部CT、胸部CT、头颅CT |
+| 超声 (ultrasound) | 4 | 腹部B超、心脏B超、甲状腺B超、泌尿系B超 |
+| 病理 (pathology) | 3 | 活检病理、术中冰冻、细胞学检查 |
+| 其他 (other) | 8 | 胃镜、肠镜、心电图、动态心电图、胸部X线、头颅MRI、肺功能、骨密度 |
+
+每个项目包含：`code`（编码）、`name`（中文名）、`category`（分类）、`spec`（标本/准备要求）、`ref_range`（参考值）。可在后台「基础主数据 → 检验项目字典」页增删改查。
+
+---
+
+## 十七、技术栈
 
 - **后端**：Python 3.10+ / FastAPI / LangGraph / TypedDict 全局 State / JWT + RBAC / 内存 Mock 存储
 - **前端**：Vue 3 / Vite / TailwindCSS / Pinia / Vue Router / Axios
@@ -459,6 +620,6 @@ git push -u origin main
 
 ---
 
-## 十六、迭代约定
+## 十八、迭代约定
 
 后续追加指令时优先在现有架构内迭代，不推翻整体 Workflow + SubAgent 解耦方案；所有改动同步更新本 README；保持 Demo 轻量化，始终优先保证一键启动可演示。
