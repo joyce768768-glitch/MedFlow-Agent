@@ -33,6 +33,7 @@ from app.routers import (
     prediction,
     treatment,
     kg_admin,
+    semantic_ask,
     semantic_views,
 )
 
