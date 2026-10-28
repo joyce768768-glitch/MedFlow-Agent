@@ -43,3 +43,6 @@ logs/
 # ===== Demo 本地数据（仅内存，不持久化，保留以防空跑产生） =====
 *.sqlite
 *.db
+backend/data/
+*.db-wal
+*.db-shm

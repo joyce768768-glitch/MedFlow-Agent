@@ -9,9 +9,24 @@ python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.12
 
+# ===== 数据底座（M1：SQLite 持久化，业务库 backend/data/medflow_app.db） =====
+sqlalchemy>=2.0
+
 # LangGraph 工作流骨架
 langgraph==0.2.53
 langchain-core==0.3.28
 
 # 跨域
 # (FastAPI 自带 CORSMiddleware，无需额外包)
+
+# ===== KG + RAG 依赖 =====
+# KG 本体构建与查询
+rapidfuzz>=3.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+
+# 语义向量检索（双通道 RAG）
+chromadb>=0.5.0
+
+# Embedding 模型（轻量本地嵌入）
+sentence-transformers>=3.0.0

@@ -16,14 +16,23 @@ from app.routers import (
     admin,
     admin_ext,
     auth,
+    chat,
     check_tasks,
     config,
+    consultation,
     emr,
+    imaging,
+    lab,
+    lab_worklist,
     mdt,
+    memory,
     notify,
+    orchestrator,
     patient_ext,
     patients,
+    prediction,
     treatment,
+    kg_admin,
 )
 
 app = FastAPI(
@@ -44,8 +53,23 @@ app.add_middleware(
 )
 
 # 注册路由
-for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext):
+for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext, prediction, consultation, orchestrator, lab, lab_worklist, memory, chat, imaging, kg_admin):
     app.include_router(r.router)
+
+
+@app.middleware("http")
+async def _persist_after_request(request, call_next):
+    """M1 数据底座：请求边界统一落盘（内存缓存 → SQLite）。
+
+    Store 的 170 个方法保持纯内存语义；每个请求结束后整体 flush 一次
+    （演示级数据量毫秒级），保证重启数据不丢。种子灌完后也会显式落盘。
+    """
+    response = await call_next(request)
+    try:
+        store.persist_all()
+    except Exception as exc:  # 落盘失败不阻断响应（下次请求会再次尝试）
+        print(f"[persist] flush 失败: {exc}", file=__import__("sys").stderr)
+    return response
 
 
 @app.get("/", tags=["health"])
