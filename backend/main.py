@@ -33,6 +33,7 @@ from app.routers import (
     prediction,
     treatment,
     kg_admin,
+    semantic_views,
 )
 
 app = FastAPI(
@@ -53,7 +54,7 @@ app.add_middleware(
 )
 
 # 注册路由
-for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext, prediction, consultation, orchestrator, lab, lab_worklist, memory, chat, imaging, kg_admin):
+for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext, prediction, consultation, orchestrator, lab, lab_worklist, memory, chat, imaging, kg_admin, semantic_views):
     app.include_router(r.router)
 
 

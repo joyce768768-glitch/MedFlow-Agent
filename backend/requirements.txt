@@ -12,6 +12,10 @@ python-multipart==0.0.12
 # ===== 数据底座（M1：SQLite 持久化，业务库 backend/data/medflow_app.db） =====
 sqlalchemy>=2.0
 
+# ===== 语义视图层（M2：契约仓库编译器，本机可编辑安装） =====
+# pip install -e /Users/moon/Trae/Ontology研究/semantic-contract
+semantic-contract>=0.2
+
 # LangGraph 工作流骨架
 langgraph==0.2.53
 langchain-core==0.3.28
