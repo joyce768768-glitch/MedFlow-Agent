@@ -32,6 +32,7 @@ const routes = [
       { path: 'agents', name: 'adminAgents', component: () => import('../views/admin/AdminAgentConfig.vue') },
       { path: 'permissions', name: 'adminPermissions', component: () => import('../views/admin/AdminPermissions.vue') },
       { path: 'cases', name: 'adminCases', component: () => import('../views/admin/AdminCases.vue') },
+      { path: 'medical-stats', name: 'adminMedicalStats', component: () => import('../views/admin/AdminMedicalStats.vue') },
       { path: 'audit', name: 'adminAudit', component: () => import('../views/admin/AdminAuditLog.vue') },
     ],
   },

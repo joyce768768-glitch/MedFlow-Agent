@@ -34,6 +34,7 @@ from app.routers import (
     treatment,
     kg_admin,
     semantic_ask,
+    semantic_report,
     semantic_views,
 )
 
@@ -54,8 +55,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 注册路由
-for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext, prediction, consultation, orchestrator, lab, lab_worklist, memory, chat, imaging, kg_admin, semantic_views):
+# 注册路由（M4 修复：semantic_ask 此前漏注册，本行补上）
+for r in (auth, patients, treatment, mdt, check_tasks, emr, config, notify, admin, admin_ext, patient_ext, prediction, consultation, orchestrator, lab, lab_worklist, memory, chat, imaging, kg_admin, semantic_ask, semantic_report, semantic_views):
     app.include_router(r.router)
 
 
